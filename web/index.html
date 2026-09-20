@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>PulsOx — Monitor de oximetría</title>
+<meta name="description" content="Dashboard en tiempo real de SpO2 y frecuencia cardíaca para el pulsioxímetro casero ESP32-C3 + MAX30102." />
+<meta name="theme-color" content="#0891b2" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" href="assets/icons/icon-32.png" sizes="32x32" />
+<link rel="icon" href="assets/icons/icon-192.png" sizes="192x192" />
+<link rel="apple-touch-icon" href="assets/icons/icon-180.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@600;700;800&family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="css/tokens.css" />
+<link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+<div class="app-shell">
+
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand__mark" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="3,12 8,12 10,6 14,18 16,12 21,12" />
+        </svg>
+      </span>
+      <span>PulsOx</span>
+    </div>
+    <div class="header-actions">
+      <div id="connection-badge" class="badge" data-state="offline" role="status" aria-live="polite">
+        <span class="badge__dot" aria-hidden="true"></span>
+        <span class="badge__icon" aria-hidden="true"></span>
+        <span id="connection-label">Sin conexión</span>
+      </div>
+      <button id="settings-btn" class="icon-btn" type="button" aria-label="Ajustes"></button>
+    </div>
+  </header>
+
+  <main>
+    <section class="kpi-grid" aria-label="Lecturas actuales">
+      <article class="kpi-card" id="spo2-card" data-status="unknown">
+        <div class="kpi-card__header">
+          <span class="kpi-label">SpO2</span>
+          <span id="spo2-status-icon" class="kpi-card__status-icon" aria-hidden="true"></span>
+        </div>
+        <div class="kpi-value-row">
+          <span class="kpi-value" id="spo2-value">—</span>
+          <span class="kpi-unit">%</span>
+        </div>
+        <div class="status-pill" id="spo2-status-pill"></div>
+      </article>
+
+      <article class="kpi-card" id="bpm-card" data-status="unknown">
+        <div class="kpi-card__header">
+          <span class="kpi-label">Frecuencia cardíaca</span>
+          <span id="bpm-status-icon" class="kpi-card__status-icon" aria-hidden="true"></span>
+        </div>
+        <div class="kpi-value-row">
+          <span class="kpi-value" id="bpm-value">—</span>
+          <span class="kpi-unit">lpm</span>
+        </div>
+        <div class="status-pill" id="bpm-status-pill"></div>
+      </article>
+    </section>
+
+    <section class="signal-quality" id="signal-quality-section" hidden aria-label="Calidad de señal">
+      <span class="signal-label">Calidad de señal</span>
+      <div class="signal-bar-track">
+        <div class="signal-bar-fill" id="signal-bar-fill"></div>
+      </div>
+    </section>
+
+    <section class="charts" aria-label="Historial en gráficos">
+      <div class="chart-card">
+        <div class="chart-card__header">
+          <h2 class="chart-card__title">SpO2 en el tiempo</h2>
+          <div class="chart-card__controls">
+            <div class="range-pills" id="spo2-range">
+              <button type="button" data-range="120">2 min</button>
+              <button type="button" data-range="600" class="is-active">10 min</button>
+              <button type="button" data-range="3600">1 h</button>
+            </div>
+            <button type="button" class="pause-btn" id="spo2-pause-btn"></button>
+          </div>
+        </div>
+        <div class="chart-canvas-wrap">
+          <canvas id="spo2-chart" role="img" aria-label="Gráfico de SpO2 en el tiempo"></canvas>
+          <div class="chart-empty" id="spo2-chart-empty">Esperando lecturas de SpO2…</div>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-card__header">
+          <h2 class="chart-card__title">Frecuencia cardíaca en el tiempo</h2>
+          <div class="chart-card__controls">
+            <div class="range-pills" id="bpm-range">
+              <button type="button" data-range="120">2 min</button>
+              <button type="button" data-range="600" class="is-active">10 min</button>
+              <button type="button" data-range="3600">1 h</button>
+            </div>
+            <button type="button" class="pause-btn" id="bpm-pause-btn"></button>
+          </div>
+        </div>
+        <div class="chart-canvas-wrap">
+          <canvas id="bpm-chart" role="img" aria-label="Gráfico de frecuencia cardíaca en el tiempo"></canvas>
+          <div class="chart-empty" id="bpm-chart-empty">Esperando lecturas de frecuencia cardíaca…</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="history" aria-label="Historial de lecturas">
+      <div class="history__header">
+        <h2>Historial</h2>
+        <div class="filter-chips" role="group" aria-label="Filtrar historial">
+          <button type="button" data-filter="all" class="is-active">Todas</button>
+          <button type="button" data-filter="warning">Precaución</button>
+          <button type="button" data-filter="critical">Peligro</button>
+        </div>
+      </div>
+      <ul class="history-list" id="history-list"></ul>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    PulsOx es un proyecto personal de código abierto (ESP32-C3 + MAX30102). No es un dispositivo médico certificado — ante síntomas reales, consultá a un profesional de la salud.
+  </footer>
+</div>
+
+<div class="settings-drawer" id="settings-drawer" hidden data-open="false" aria-hidden="true">
+  <div class="settings-backdrop"></div>
+  <div class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="settings-panel__header">
+      <h2 id="settings-title">Ajustes</h2>
+      <button type="button" class="icon-btn" id="settings-close" aria-label="Cerrar ajustes"></button>
+    </div>
+
+    <div class="settings-group">
+      <h3>Conexión</h3>
+      <div class="field">
+        <label for="ws-url-input">Dirección del ESP32 (WebSocket)</label>
+        <input type="text" id="ws-url-input" placeholder="ws://192.168.1.42/ws" autocomplete="off" autocapitalize="off" spellcheck="false" />
+        <span class="field-hint">La app y el ESP32 deben estar en la misma red WiFi.</span>
+      </div>
+      <button type="button" class="btn-primary" id="ws-connect-btn">Conectar</button>
+      <div class="toggle-row">
+        <span class="toggle-row__label">
+          <strong>Modo demo</strong>
+          <span>Simula lecturas para probar el dashboard sin hardware.</span>
+        </span>
+        <label class="switch">
+          <input type="checkbox" id="demo-toggle" />
+          <span class="switch__track"></span>
+        </label>
+      </div>
+      <p class="field-hint" id="device-info">Sin datos del dispositivo todavía.</p>
+    </div>
+
+    <div class="settings-group">
+      <h3>Apariencia</h3>
+      <div class="segmented" id="theme-segmented" role="group" aria-label="Tema">
+        <button type="button" data-theme="auto" class="is-active">Auto</button>
+        <button type="button" data-theme="light">Claro</button>
+        <button type="button" data-theme="dark">Oscuro</button>
+      </div>
+    </div>
+
+    <div class="settings-group">
+      <h3>Umbrales de SpO2 (%)</h3>
+      <div class="field-row">
+        <div class="field">
+          <label for="th-spo2-warning">Precaución desde</label>
+          <input type="number" id="th-spo2-warning" min="70" max="99" step="1" />
+        </div>
+        <div class="field">
+          <label for="th-spo2-good">Normal desde</label>
+          <input type="number" id="th-spo2-good" min="70" max="100" step="1" />
+        </div>
+      </div>
+      <span class="field-hint">Debajo de "Precaución desde" se marca como Peligro.</span>
+    </div>
+
+    <div class="settings-group">
+      <h3>Umbrales de frecuencia cardíaca (lpm)</h3>
+      <div class="field-row">
+        <div class="field">
+          <label for="th-bpm-low-warning">Peligro bajo</label>
+          <input type="number" id="th-bpm-low-warning" min="20" max="100" step="1" />
+        </div>
+        <div class="field">
+          <label for="th-bpm-low-good">Normal desde</label>
+          <input type="number" id="th-bpm-low-good" min="20" max="120" step="1" />
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="th-bpm-high-good">Normal hasta</label>
+          <input type="number" id="th-bpm-high-good" min="60" max="200" step="1" />
+        </div>
+        <div class="field">
+          <label for="th-bpm-high-warning">Peligro alto</label>
+          <input type="number" id="th-bpm-high-warning" min="80" max="220" step="1" />
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-group">
+      <h3>Historial</h3>
+      <button type="button" class="btn-destructive" id="clear-history-btn"></button>
+    </div>
+
+    <p class="settings-disclaimer">
+      Los umbrales de esta app son guías generales de bienestar, no un diagnóstico médico. PulsOx no reemplaza a un pulsioxímetro certificado ni a la evaluación de un profesional de la salud.
+    </p>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.0/chart.umd.min.js"></script>
+<script src="js/icons.js"></script>
+<script src="js/protocol.js"></script>
+<script src="js/simulator.js"></script>
+<script src="js/connection.js"></script>
+<script src="js/history.js"></script>
+<script src="js/charts.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

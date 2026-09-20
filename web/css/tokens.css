@@ -1,0 +1,177 @@
+/* ==========================================================================
+   Design tokens — three layers: primitive -> semantic -> component.
+   Source: design-system/pulsox-esp32/MASTER.md (ui-ux-pro-max) +
+   design-system/pulsox-esp32/pages/dashboard.md + dataviz status palette.
+   Only semantic/component tokens should be used outside this file.
+   ========================================================================== */
+
+:root {
+  /* ---- primitive: brand ramp (ui-ux-pro-max design system) ---- */
+  --p-teal-600: #0891b2;
+  --p-teal-400: #22d3ee;
+  --p-teal-050: #f0fdfa;
+  --p-teal-100: #ccfbf1;
+  --p-teal-900: #134e4a;
+  --p-green-600: #16a34a;
+  --p-red-600: #dc2626;
+  --p-slate-050: #e8f1f6;
+  --p-white: #ffffff;
+  --p-black: #0b0b0b;
+
+  /* ---- primitive: status ramp (dataviz skill, validated, fixed) ---- */
+  --p-status-good: #0ca30c;
+  --p-status-warning: #fab219;
+  --p-status-critical: #d03b3b;
+  --p-status-critical-dark: #e35b5b;
+  --p-chart-spo2-line: #0891b2;
+  --p-chart-bpm-line: #4a3aa7;
+
+  /* ---- primitive: neutrals for dark surface ---- */
+  --p-ink-900-dark: #eef6f6;
+  --p-surface-000-dark: #0d1417;
+  --p-surface-100-dark: #141d21;
+  --p-surface-200-dark: #1b262b;
+  --p-border-dark: #24343a;
+  --p-muted-dark: #7d939a;
+
+  /* ---- primitive: spacing scale (density 6/10) ---- */
+  --p-space-xs: 0.25rem;
+  --p-space-sm: 0.5rem;
+  --p-space-md: 1rem;
+  --p-space-lg: 1.5rem;
+  --p-space-xl: 2rem;
+  --p-space-2xl: 3rem;
+
+  /* ---- primitive: radii / shadow ---- */
+  --p-radius-sm: 8px;
+  --p-radius-md: 12px;
+  --p-radius-lg: 16px;
+  --p-radius-pill: 999px;
+  --p-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --p-shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+  --p-shadow-lg: 0 10px 20px rgba(0, 0, 0, 0.12);
+
+  /* ---- primitive: type ---- */
+  --p-font-heading: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --p-font-body: "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* ================= semantic (light — default) ================= */
+  color-scheme: light;
+  --color-background: var(--p-teal-050);
+  --color-surface: var(--p-white);
+  --color-surface-raised: var(--p-white);
+  --color-foreground: var(--p-teal-900);
+  --color-muted: #5b7a78;
+  --color-border: var(--p-teal-100);
+  --color-primary: var(--p-teal-600);
+  --color-on-primary: var(--p-white);
+  --color-secondary: var(--p-teal-400);
+  --color-accent: var(--p-green-600);
+  --color-destructive: var(--p-red-600);
+  --color-ring: var(--p-teal-600);
+
+  --color-status-good: var(--p-status-good);
+  --color-status-good-tint: color-mix(in srgb, var(--p-status-good) 12%, transparent);
+  --color-status-good-tint-strong: color-mix(in srgb, var(--p-status-good) 6%, var(--color-surface));
+  --color-status-warning: var(--p-status-warning);
+  --color-status-warning-tint: color-mix(in srgb, var(--p-status-warning) 18%, transparent);
+  --color-status-warning-tint-strong: color-mix(in srgb, var(--p-status-warning) 10%, var(--color-surface));
+  --color-status-critical: var(--p-status-critical);
+  --color-status-critical-tint: color-mix(in srgb, var(--p-status-critical) 12%, transparent);
+  --color-status-critical-tint-strong: color-mix(in srgb, var(--p-status-critical) 6%, var(--color-surface));
+  --color-status-unknown: var(--color-muted);
+  --color-status-unknown-tint: color-mix(in srgb, var(--color-muted) 10%, transparent);
+
+  --color-chart-spo2-line: var(--p-chart-spo2-line);
+  --color-chart-bpm-line: var(--p-chart-bpm-line);
+  --color-chart-grid: color-mix(in srgb, var(--color-foreground) 10%, transparent);
+  --color-chart-axis-text: var(--color-muted);
+
+  --shadow-card: var(--p-shadow-md);
+  --shadow-raised: var(--p-shadow-lg);
+  --radius-card: var(--p-radius-md);
+  --radius-control: var(--p-radius-sm);
+  --radius-pill: var(--p-radius-pill);
+
+  --space-xs: var(--p-space-xs);
+  --space-sm: var(--p-space-sm);
+  --space-md: var(--p-space-md);
+  --space-lg: var(--p-space-lg);
+  --space-xl: var(--p-space-xl);
+  --space-2xl: var(--p-space-2xl);
+
+  --font-heading: var(--p-font-heading);
+  --font-body: var(--p-font-body);
+
+  --motion-fast: 150ms;
+  --motion-base: 220ms;
+  --motion-slow: 320ms;
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ================= semantic (dark) =================
+   Applied both when the OS prefers dark AND no explicit light override is
+   set, and when the user's in-app toggle sets data-theme="dark" directly. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-background: var(--p-surface-000-dark);
+    --color-surface: var(--p-surface-100-dark);
+    --color-surface-raised: var(--p-surface-200-dark);
+    --color-foreground: var(--p-ink-900-dark);
+    --color-muted: var(--p-muted-dark);
+    --color-border: var(--p-border-dark);
+    --color-primary: var(--p-teal-400);
+    --color-on-primary: #06282e;
+    --color-secondary: var(--p-teal-400);
+    --color-accent: #34d399;
+    --color-destructive: #f87171;
+    --color-ring: var(--p-teal-400);
+
+    --color-status-critical: var(--p-status-critical-dark);
+    --color-status-good-tint: color-mix(in srgb, var(--p-status-good) 22%, transparent);
+    --color-status-good-tint-strong: color-mix(in srgb, var(--p-status-good) 14%, var(--color-surface));
+    --color-status-warning-tint: color-mix(in srgb, var(--p-status-warning) 26%, transparent);
+    --color-status-warning-tint-strong: color-mix(in srgb, var(--p-status-warning) 16%, var(--color-surface));
+    --color-status-critical-tint: color-mix(in srgb, var(--p-status-critical-dark) 22%, transparent);
+    --color-status-critical-tint-strong: color-mix(in srgb, var(--p-status-critical-dark) 14%, var(--color-surface));
+
+    --color-chart-spo2-line: #4dd4f0;
+    --color-chart-bpm-line: #9b8cf2;
+    --color-chart-grid: color-mix(in srgb, var(--color-foreground) 14%, transparent);
+
+    --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.4);
+    --shadow-raised: 0 12px 28px rgba(0, 0, 0, 0.5);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-background: var(--p-surface-000-dark);
+  --color-surface: var(--p-surface-100-dark);
+  --color-surface-raised: var(--p-surface-200-dark);
+  --color-foreground: var(--p-ink-900-dark);
+  --color-muted: var(--p-muted-dark);
+  --color-border: var(--p-border-dark);
+  --color-primary: var(--p-teal-400);
+  --color-on-primary: #06282e;
+  --color-secondary: var(--p-teal-400);
+  --color-accent: #34d399;
+  --color-destructive: #f87171;
+  --color-ring: var(--p-teal-400);
+
+  --color-status-critical: var(--p-status-critical-dark);
+  --color-status-good-tint: color-mix(in srgb, var(--p-status-good) 22%, transparent);
+  --color-status-good-tint-strong: color-mix(in srgb, var(--p-status-good) 14%, var(--color-surface));
+  --color-status-warning-tint: color-mix(in srgb, var(--p-status-warning) 26%, transparent);
+  --color-status-warning-tint-strong: color-mix(in srgb, var(--p-status-warning) 16%, var(--color-surface));
+  --color-status-critical-tint: color-mix(in srgb, var(--p-status-critical-dark) 22%, transparent);
+  --color-status-critical-tint-strong: color-mix(in srgb, var(--p-status-critical-dark) 14%, var(--color-surface));
+
+  --color-chart-spo2-line: #4dd4f0;
+  --color-chart-bpm-line: #9b8cf2;
+  --color-chart-grid: color-mix(in srgb, var(--color-foreground) 14%, transparent);
+
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-raised: 0 12px 28px rgba(0, 0, 0, 0.5);
+}
