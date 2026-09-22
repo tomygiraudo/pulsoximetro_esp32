@@ -4,7 +4,7 @@
 // shell, not telemetry (which never goes through fetch/cache anyway; it's
 // WebSocket).
 
-const CACHE_NAME = "pulsox-shell-v1";
+const CACHE_NAME = "pulsox-shell-v2";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
