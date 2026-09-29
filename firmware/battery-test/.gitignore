@@ -1,0 +1,3 @@
+.pio/
+include/secrets.h
+tools/battery_test_log.csv
