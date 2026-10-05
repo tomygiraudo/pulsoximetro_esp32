@@ -1,9 +1,9 @@
-// Two independent single-series line charts (SpO2 %, BPM). Deliberately NOT
-// a combined dual-axis chart — the two vitals have incompatible scales and
-// independent thresholds (see dataviz skill anti-pattern: never two y-scales
-// on one chart). Each keeps its own rolling buffer, its own time-range
-// window, its own pause state, and paints its zone bands via a small custom
-// plugin instead of pulling in the annotation plugin as a second dependency.
+// Two independent single-series line charts (SpO2 %, BPM) shown one at a time
+// in the Historial view. Deliberately NOT a combined dual-axis chart — the two
+// vitals have incompatible scales and independent thresholds (never two
+// y-scales on one chart). Each keeps its own rolling buffer and paints its
+// zone bands via a small custom plugin instead of pulling in the annotation
+// plugin as a second dependency.
 //
 // Colors are passed in as literal hex/rgba strings, never CSS var()/
 // color-mix() references — <canvas> fillStyle parsing is stricter than the
@@ -11,11 +11,12 @@
 
 const CHART_BUFFER_MAX_POINTS = 3600; // 1h at 1Hz
 
-const RANGE_OPTIONS = [
-  { key: "2m", label: "2 min", seconds: 120 },
-  { key: "10m", label: "10 min", seconds: 600 },
-  { key: "1h", label: "1 h", seconds: 3600 },
-];
+/** "#rrggbb" -> "rgba(r, g, b, a)". Shared with ppg.js (loaded after this file). */
+function withAlpha(hex, alpha) {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+  if (!m) return hex;
+  return `rgba(${parseInt(m[1], 16)}, ${parseInt(m[2], 16)}, ${parseInt(m[3], 16)}, ${alpha})`;
+}
 
 function zoneBandsPlugin(getZones) {
   return {
@@ -44,19 +45,22 @@ class VitalChart {
    * @param {HTMLCanvasElement} opts.canvas
    * @param {HTMLElement} opts.emptyStateEl
    * @param {string} opts.lineColor
+   * @param {string} opts.surfaceColor  fill of the ring around the live end point
    * @param {[number, number]} opts.yRange
+   * @param {() => number[]} opts.getTickValues  y ticks (usually the threshold lines)
    * @param {() => Array<{min:number,max:number,color:string}>} opts.getZones
    * @param {string} opts.unit
    * @param {{axisText: string, grid: string}} opts.theme
    */
-  constructor({ canvas, emptyStateEl, lineColor, yRange, getZones, unit, theme }) {
+  constructor({ canvas, emptyStateEl, lineColor, surfaceColor, yRange, getTickValues, getZones, unit, theme }) {
     this._buffer = []; // { t: epoch ms, v: number|null }
-    this._paused = false;
-    this._rangeSeconds = RANGE_OPTIONS[1].seconds;
+    this._rangeSeconds = 600;
     this._emptyStateEl = emptyStateEl;
     this._unit = unit;
+    this._lineColor = lineColor;
 
     const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const lastPointVisible = (ctx) => ctx.dataIndex === ctx.dataset.data.length - 1 && ctx.raw && ctx.raw.y !== null;
 
     this._chart = new Chart(canvas.getContext("2d"), {
       type: "line",
@@ -65,10 +69,24 @@ class VitalChart {
           {
             data: [],
             borderColor: lineColor,
-            backgroundColor: lineColor,
-            borderWidth: 2,
-            pointRadius: 0,
-            pointHoverRadius: 4,
+            borderWidth: 2.5,
+            borderCapStyle: "round",
+            borderJoinStyle: "round",
+            fill: "start",
+            backgroundColor: (context) => {
+              const { chart } = context;
+              const { ctx, chartArea } = chart;
+              if (!chartArea) return "transparent";
+              const gradient = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+              gradient.addColorStop(0, withAlpha(this._lineColor, 0.28));
+              gradient.addColorStop(1, withAlpha(this._lineColor, 0));
+              return gradient;
+            },
+            pointRadius: (ctx) => (lastPointVisible(ctx) ? 5 : 0),
+            pointBackgroundColor: lineColor,
+            pointBorderColor: surfaceColor,
+            pointBorderWidth: 2.5,
+            pointHoverRadius: 5,
             pointHitRadius: 12,
             tension: 0.25,
             spanGaps: false,
@@ -79,6 +97,7 @@ class VitalChart {
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        layout: { padding: { top: 6, right: 8 } },
         animation: prefersReducedMotion ? false : { duration: 200 },
         parsing: false,
         interaction: { mode: "nearest", intersect: false, axis: "x" },
@@ -86,17 +105,30 @@ class VitalChart {
           x: {
             type: "linear",
             grid: { display: false },
+            border: { display: false },
             ticks: {
               color: theme.axisText,
-              maxTicksLimit: 5,
+              font: { family: "Figtree, system-ui, sans-serif", size: 11, weight: 600 },
               callback: (value) => formatRelativeTick(value),
+            },
+            // five evenly spaced ticks across the window (-range ... ahora)
+            afterBuildTicks: (scale) => {
+              const { min, max } = scale;
+              scale.ticks = [0, 1, 2, 3, 4].map((i) => ({ value: min + (i * (max - min)) / 4 }));
             },
           },
           y: {
             min: yRange[0],
             max: yRange[1],
             grid: { color: theme.grid },
-            ticks: { color: theme.axisText },
+            border: { display: false },
+            ticks: {
+              color: theme.axisText,
+              font: { family: "Figtree, system-ui, sans-serif", size: 11, weight: 600 },
+            },
+            afterBuildTicks: (scale) => {
+              scale.ticks = getTickValues().map((value) => ({ value }));
+            },
           },
         },
         plugins: {
@@ -125,7 +157,7 @@ class VitalChart {
     if (this._buffer.length > CHART_BUFFER_MAX_POINTS) {
       this._buffer.splice(0, this._buffer.length - CHART_BUFFER_MAX_POINTS);
     }
-    if (!this._paused) this._render();
+    this._render();
   }
 
   setRangeSeconds(seconds) {
@@ -133,27 +165,25 @@ class VitalChart {
     this._render();
   }
 
-  setPaused(paused) {
-    this._paused = paused;
-    if (!paused) this._render();
-  }
-
-  get isPaused() {
-    return this._paused;
+  /** Needed when the canvas becomes visible after being laid out hidden. */
+  resize() {
+    this._chart.resize();
+    this._render();
   }
 
   /** Repaints without touching data — used after a threshold edit, since
-   * the zone bands read live threshold state through the getZones closure
-   * on every beforeDraw and just need a redraw to reflect the new values. */
+   * the zone bands and tick values read live threshold state through closures
+   * on every draw and just need a redraw to reflect the new values. */
   redraw() {
     this._chart.update("none");
   }
 
-  setTheme({ lineColor, axisText, grid }) {
-    if (lineColor) {
-      this._chart.data.datasets[0].borderColor = lineColor;
-      this._chart.data.datasets[0].backgroundColor = lineColor;
-    }
+  setTheme({ lineColor, surfaceColor, axisText, grid }) {
+    this._lineColor = lineColor;
+    const dataset = this._chart.data.datasets[0];
+    dataset.borderColor = lineColor;
+    dataset.pointBackgroundColor = lineColor;
+    dataset.pointBorderColor = surfaceColor;
     this._chart.options.scales.x.ticks.color = axisText;
     this._chart.options.scales.y.ticks.color = axisText;
     this._chart.options.scales.y.grid.color = grid;
@@ -177,7 +207,7 @@ class VitalChart {
     this._updateEmptyState(windowed.some((p) => p.v !== null));
   }
 
-  _updateEmptyState(hasData = this._buffer.some((p) => p.v !== null)) {
+  _updateEmptyState(hasData) {
     if (this._emptyStateEl) this._emptyStateEl.hidden = hasData;
   }
 }
@@ -186,5 +216,6 @@ function formatRelativeTick(epochMs) {
   const diffSec = Math.round((Date.now() - epochMs) / 1000);
   if (diffSec < 5) return "ahora";
   if (diffSec < 60) return `-${diffSec}s`;
-  return `-${Math.round(diffSec / 60)}min`;
+  const minutes = diffSec / 60;
+  return `-${Number.isInteger(minutes) ? minutes : minutes.toFixed(1).replace(".", ",")}min`;
 }

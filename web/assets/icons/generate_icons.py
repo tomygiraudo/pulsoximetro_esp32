@@ -5,9 +5,8 @@ build tool, not a runtime dependency."""
 
 from PIL import Image, ImageDraw
 
-TEAL = (8, 145, 178, 255)      # --color-primary
+BLUE = (43, 88, 224, 255)      # --color-primary (light theme)
 WHITE = (255, 255, 255, 255)
-GREEN_DOT = (22, 163, 74, 255)  # --color-accent
 
 
 def pulse_points(w, h):
@@ -31,7 +30,7 @@ def draw_icon(size, radius_ratio=0.22, padding_ratio=0.0):
     draw = ImageDraw.Draw(img)
 
     r = int(size * radius_ratio)
-    draw.rounded_rectangle([0, 0, size - 1, size - 1], radius=r, fill=TEAL)
+    draw.rounded_rectangle([0, 0, size - 1, size - 1], radius=r, fill=BLUE)
 
     stroke_w = max(2, round(size * 0.045))
     pts = pulse_points(size, size)
@@ -42,15 +41,6 @@ def draw_icon(size, radius_ratio=0.22, padding_ratio=0.0):
     for x, y in pts:
         draw.ellipse([x - cap_r, y - cap_r, x + cap_r, y + cap_r], fill=WHITE)
 
-    # small accent dot marking the "live" pulse peak
-    peak_x, peak_y = pts[4]
-    dot_r = size * 0.045
-    draw.ellipse(
-        [peak_x - dot_r, peak_y - dot_r, peak_x + dot_r, peak_y + dot_r],
-        fill=GREEN_DOT,
-        outline=WHITE,
-        width=max(1, round(size * 0.012)),
-    )
 
     return img
 
@@ -60,7 +50,7 @@ def draw_maskable(size):
     crop to a circle/squircle without warning."""
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    draw.rectangle([0, 0, size, size], fill=TEAL)
+    draw.rectangle([0, 0, size, size], fill=BLUE)
 
     inner = draw_icon(int(size * 0.7), radius_ratio=0)
     pad = (size - inner.width) // 2
