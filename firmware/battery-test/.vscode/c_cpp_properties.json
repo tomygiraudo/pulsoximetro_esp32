@@ -10,6 +10,7 @@
             "includePath": [
                 "C:/Users/tomyg/Desktop/pulsoximetro_esp32/firmware/battery-test/include",
                 "C:/Users/tomyg/Desktop/pulsoximetro_esp32/firmware/battery-test/src",
+                "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/Wire/src",
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src",
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/newlib/platform_include",
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/freertos/include",
@@ -235,7 +236,6 @@
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/WebServer/src",
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/WiFiClientSecure/src",
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/WiFiProv/src",
-                "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/Wire/src",
                 ""
             ],
             "browse": {
@@ -243,6 +243,7 @@
                 "path": [
                     "C:/Users/tomyg/Desktop/pulsoximetro_esp32/firmware/battery-test/include",
                     "C:/Users/tomyg/Desktop/pulsoximetro_esp32/firmware/battery-test/src",
+                    "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/Wire/src",
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src",
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/newlib/platform_include",
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/freertos/include",
@@ -468,7 +469,6 @@
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/WebServer/src",
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/WiFiClientSecure/src",
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/WiFiProv/src",
-                    "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/Wire/src",
                     ""
                 ]
             },
