@@ -11,6 +11,20 @@
 // then runs a visual pattern on the TFT (colors / border / backlight) and
 // finally shows live IR / RED readings from the MAX30102 on the TFT + Serial.
 //
+// The TFT side is compiled out unless ENABLE_TFT is 1 (see below): with it off,
+// test 5 is reported as N/D, the TFT pins are never touched and everything is
+// reported on Serial only.
+//
+// Debug aids (so a silent board can still be told apart from a dead one):
+//   - On-board LED (GPIO8): 3 quick blinks at boot = firmware started, even with
+//     no Serial. Then it blinks fast (4 Hz) while the MAX30102 is missing and
+//     slowly (1 Hz) while it is streaming. Solid on = still inside setup().
+//   - Every "[uptime][TAG]" line on Serial carries the uptime in ms. Boot info
+//     (reset reason, brownout, heap), I2C line levels, and the raw I2C error
+//     code on every failure.
+//   - While the sensor is missing, one line every 2 s with the I2C error and
+//     the SDA/SCL/INT levels; in live mode one stats line per second.
+//
 // Pins are the ones in PCB/Sensor_ctrl_pwr_pcb (KiCad schematic, "Esquematico V2"):
 //   SDA-OX  GPIO3   I2C SDA (MAX30102)
 //   SCL-OX  GPIO4   I2C SCL (MAX30102)
@@ -26,12 +40,20 @@
 // Live mode also streams "ir:<n>,red:<n>" lines, so the values can be
 // plotted with any serial plotter.
 
+// Set to 1 once the TFT is wired up. Can also be overridden with -DENABLE_TFT=1.
+#ifndef ENABLE_TFT
+#define ENABLE_TFT 0
+#endif
+
 #include <Arduino.h>
 #include <Wire.h>
-#include <SPI.h>
+#include <esp_system.h>
 #include <stdarg.h>
+#if ENABLE_TFT
+#include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7735.h>
+#endif
 
 // ---- Pins -----------------------------------------------------------------
 #define PIN_SDA_OX 3
@@ -45,6 +67,12 @@
 #define PIN_BL_TFT 5
 
 #define BL_ON HIGH   // flip to LOW if the backlight turns out to be active-low
+
+// ESP32-C3 Super Mini on-board LED, not wired to anything on the PCB (V2).
+#define PIN_LED 8
+#define LED_ON_LEVEL LOW          // active-low on the Super Mini; flip if it looks inverted
+#define LED_PERIOD_IDLE_MS 125    // toggle period while the sensor is missing (fast blink)
+#define LED_PERIOD_LIVE_MS 500    // toggle period while streaming (slow blink)
 
 // ---- TFT ------------------------------------------------------------------
 #define TFT_W 128
@@ -101,6 +129,12 @@
 #define RETRY_INTERVAL_MS 2000
 #define I2C_FAILS_BEFORE_LOST 10
 
+#if ENABLE_TFT
+#define SUMMARY_HOLD_MS 3000    // time to read the summary on the TFT before going live
+#else
+#define SUMMARY_HOLD_MS 0
+#endif
+
 // ---- Test bookkeeping -------------------------------------------------------
 enum TestId : uint8_t { T_I2C_SCAN, T_PART_ID, T_DIE_TEMP, T_INT_PIN, T_LCD_READBACK, T_COUNT };
 enum Result : uint8_t { R_PENDING, R_PASS, R_FAIL, R_NA };
@@ -110,11 +144,14 @@ static const char *TEST_LABELS[T_COUNT] = {
 static Result results[T_COUNT];
 
 static float dieTempC = 0;
+
+#if ENABLE_TFT
 static uint8_t tftRddpmBefore = 0, tftRddpmAfter = 0;
 static uint8_t tftId[3] = {0, 0, 0};
 
 static Adafruit_ST7735 tft(&SPI, PIN_CS_TFT, PIN_DC_TFT, PIN_RST_TFT);
 static GFXcanvas16 plot(TFT_W, PLOT_H);
+#endif
 
 static const char *resultText(Result r) {
   switch (r) {
@@ -125,6 +162,7 @@ static const char *resultText(Result r) {
   }
 }
 
+#if ENABLE_TFT
 static uint16_t resultColor(Result r) {
   switch (r) {
     case R_PASS: return ST77XX_GREEN;
@@ -133,9 +171,10 @@ static uint16_t resultColor(Result r) {
     default: return COLOR_GRAY;
   }
 }
+#endif
 
 static void report(TestId id, Result r, const char *fmt, ...) {
-  char detail[120];
+  char detail[200];
   va_list args;
   va_start(args, fmt);
   vsnprintf(detail, sizeof(detail), fmt, args);
@@ -144,28 +183,116 @@ static void report(TestId id, Result r, const char *fmt, ...) {
   Serial.printf("[%-4s] %-14s %s\n", resultText(r), TEST_LABELS[id], detail);
 }
 
+// ---- Debug helpers ----------------------------------------------------------
+// Every DBG line starts with the uptime in ms and a tag, so a frozen or
+// rebooting board is obvious from the log.
+#define DBG(tag, fmt, ...) \
+  Serial.printf("[%7lu][%-4s] " fmt "\n", (unsigned long)millis(), tag, ##__VA_ARGS__)
+
+#define I2C_ERR_SHORT_READ 0xF0 // requestFrom() returned fewer bytes than asked
+static uint8_t lastI2cErr = 0;  // last error seen by maxWrite / maxReadBytes
+
+static void ledSet(bool on) { digitalWrite(PIN_LED, on ? LED_ON_LEVEL : !LED_ON_LEVEL); }
+
+// Wire.endTransmission() return values (Arduino-ESP32), plus our own short read.
+static const char *i2cErrText(uint8_t e) {
+  switch (e) {
+    case 0: return "ok";
+    case 1: return "datos demasiado largos";
+    case 2: return "NACK en la direccion (nadie responde)";
+    case 3: return "NACK en los datos";
+    case 4: return "error del bus";
+    case 5: return "timeout (SDA/SCL trabadas?)";
+    case I2C_ERR_SHORT_READ: return "lectura incompleta";
+    default: return "desconocido";
+  }
+}
+
+static const char *resetReasonText(esp_reset_reason_t r) {
+  switch (r) {
+    case ESP_RST_POWERON: return "encendido (power-on)";
+    case ESP_RST_EXT: return "pin RESET";
+    case ESP_RST_SW: return "reinicio por software";
+    case ESP_RST_PANIC: return "CRASH (panic / excepcion)";
+    case ESP_RST_INT_WDT: return "watchdog de interrupciones";
+    case ESP_RST_TASK_WDT: return "watchdog de tarea";
+    case ESP_RST_WDT: return "watchdog";
+    case ESP_RST_DEEPSLEEP: return "salida de deep sleep";
+    case ESP_RST_BROWNOUT: return "BROWNOUT (alimentacion insuficiente)";
+    default: return "otra / desconocida";
+  }
+}
+
+static void printBootInfo() {
+  esp_reset_reason_t rr = esp_reset_reason();
+  DBG("BOOT", "build %s %s, TFT %s", __DATE__, __TIME__, ENABLE_TFT ? "habilitado" : "deshabilitado");
+  DBG("BOOT", "causa del reset: %s (%d)", resetReasonText(rr), (int)rr);
+  DBG("BOOT", "chip %s rev %d, %u MHz, heap libre %u B", ESP.getChipModel(),
+      (int)ESP.getChipRevision(), (unsigned)ESP.getCpuFreqMHz(), (unsigned)ESP.getFreeHeap());
+}
+
+// Current level of the I2C lines and INT. Safe to call any time (read-only).
+static void dbgI2cLines(const char *when) {
+  DBG("I2C", "%s: SDA(GPIO%d)=%d SCL(GPIO%d)=%d INT(GPIO%d)=%d", when, PIN_SDA_OX,
+      digitalRead(PIN_SDA_OX), PIN_SCL_OX, digitalRead(PIN_SCL_OX), PIN_INT_OX,
+      digitalRead(PIN_INT_OX));
+}
+
+// Run once BEFORE Wire.begin(): tells "no pull-up" apart from "line held low".
+// Both lines should read 1 with the module powered (it has its own pull-ups).
+static void i2cPreCheck() {
+  pinMode(PIN_SDA_OX, INPUT);
+  pinMode(PIN_SCL_OX, INPUT);
+  delay(2);
+  bool sda = digitalRead(PIN_SDA_OX), scl = digitalRead(PIN_SCL_OX);
+  pinMode(PIN_SDA_OX, INPUT_PULLUP);
+  pinMode(PIN_SCL_OX, INPUT_PULLUP);
+  delay(2);
+  bool sdaPu = digitalRead(PIN_SDA_OX), sclPu = digitalRead(PIN_SCL_OX);
+  pinMode(PIN_SDA_OX, INPUT);
+  pinMode(PIN_SCL_OX, INPUT);
+  DBG("I2C", "pre-check sin pull-up interno: SDA=%d SCL=%d | con pull-up interno: SDA=%d SCL=%d",
+      sda, scl, sdaPu, sclPu);
+  if (sda && scl) {
+    DBG("I2C", "ok: las dos lineas estan en alto (hay pull-ups externos, bus libre)");
+  } else if (sdaPu && sclPu) {
+    DBG("I2C", "ATENCION: linea/s en bajo sin pull-up interno -> no hay pull-up externo "
+               "(modulo sin alimentar, o pista/soldadura cortada)");
+  } else {
+    DBG("I2C", "ATENCION: %s en bajo incluso con pull-up interno -> corto a GND, algo la "
+               "sujeta en bajo, o el modulo tiene pull-ups a 1.8V (el C3 necesita ~2.5V para leer 1)",
+        (!sdaPu && !sclPu) ? "SDA y SCL" : (!sdaPu ? "SDA" : "SCL"));
+  }
+}
+
 // ---- MAX30102 register access ----------------------------------------------
 static bool maxWrite(uint8_t reg, uint8_t val) {
   Wire.beginTransmission(MAX_ADDR);
   Wire.write(reg);
   Wire.write(val);
-  return Wire.endTransmission() == 0;
+  lastI2cErr = Wire.endTransmission();
+  return lastI2cErr == 0;
 }
 
 static bool maxReadBytes(uint8_t reg, uint8_t *buf, size_t n) {
   Wire.beginTransmission(MAX_ADDR);
   Wire.write(reg);
-  if (Wire.endTransmission(false) != 0) return false;
-  if (Wire.requestFrom((uint8_t)MAX_ADDR, n) != n) return false;
+  lastI2cErr = Wire.endTransmission(false);
+  if (lastI2cErr != 0) return false;
+  if (Wire.requestFrom((uint8_t)MAX_ADDR, n) != n) {
+    lastI2cErr = I2C_ERR_SHORT_READ;
+    return false;
+  }
   for (size_t i = 0; i < n; i++) buf[i] = Wire.read();
   return true;
 }
 
 static bool maxRead(uint8_t reg, uint8_t &val) { return maxReadBytes(reg, &val, 1); }
 
-static bool maxPresent() {
+// Address-only probe; returns the raw endTransmission() code (0 = ACK).
+static uint8_t maxProbe() {
   Wire.beginTransmission(MAX_ADDR);
-  return Wire.endTransmission() == 0;
+  return Wire.endTransmission();
 }
 
 // Reading the status registers clears them (and releases INT).
@@ -193,29 +320,37 @@ static bool maxSoftReset() {
 static void testI2cScan() {
   Serial.println("I2C scan (0x08-0x77):");
   bool foundMax = false;
-  uint8_t count = 0;
+  uint8_t count = 0, timeouts = 0, maxErr = 0;
   for (uint8_t addr = 0x08; addr <= 0x77; addr++) {
     Wire.beginTransmission(addr);
-    if (Wire.endTransmission() == 0) {
+    uint8_t err = Wire.endTransmission();
+    if (err == 0) {
       Serial.printf("  found 0x%02X\n", addr);
       count++;
       if (addr == MAX_ADDR) foundMax = true;
+    } else if (err == 5) {
+      timeouts++;
     }
+    if (addr == MAX_ADDR) maxErr = err;
   }
+  DBG("I2C", "scan terminado: %u respuesta/s, %u timeout/s%s", count, timeouts,
+      timeouts ? " -> el bus se traba (SDA/SCL en bajo)" : "");
+  dbgI2cLines("tras el scan");
   if (foundMax) {
     report(T_I2C_SCAN, R_PASS, "0x57 responde (%u dispositivo/s en el bus)", count);
   } else {
     report(T_I2C_SCAN, R_FAIL,
-           "0x57 no responde (%u dispositivo/s). Revisar soldadura, SDA/SCL y que los "
-           "pull-ups del modulo vayan a 3V3 (algunos modulos los traen a 1.8V)",
-           count);
+           "0x57 no responde, err=%u (%s), %u dispositivo/s. Revisar soldadura, SDA/SCL y "
+           "pull-ups a 3V3 (algunos modulos los traen a 1.8V)",
+           maxErr, i2cErrText(maxErr), count);
   }
 }
 
 static void testPartId() {
   uint8_t part = 0, rev = 0;
   if (!maxRead(REG_PART_ID, part)) {
-    report(T_PART_ID, R_FAIL, "sin respuesta al leer PART_ID");
+    report(T_PART_ID, R_FAIL, "sin respuesta al leer PART_ID, err=%u (%s)", lastI2cErr,
+           i2cErrText(lastI2cErr));
     return;
   }
   maxRead(REG_REV_ID, rev);
@@ -234,7 +369,8 @@ static void testPartId() {
 static void testDieTemp() {
   uint8_t cfg = 0, tInt = 0, tFrac = 0;
   if (!maxWrite(REG_INT_ENABLE_2, 0x00) || !maxWrite(REG_TEMP_CONFIG, 0x01)) {
-    report(T_DIE_TEMP, R_FAIL, "no se pudo escribir TEMP_CONFIG");
+    report(T_DIE_TEMP, R_FAIL, "no se pudo escribir TEMP_CONFIG, err=%u (%s)", lastI2cErr,
+           i2cErrText(lastI2cErr));
     return;
   }
   uint32_t start = millis();
@@ -251,7 +387,8 @@ static void testDieTemp() {
     return;
   }
   if (!maxRead(REG_TEMP_INT, tInt) || !maxRead(REG_TEMP_FRAC, tFrac)) {
-    report(T_DIE_TEMP, R_FAIL, "no se pudo leer TINT/TFRAC");
+    report(T_DIE_TEMP, R_FAIL, "no se pudo leer TINT/TFRAC, err=%u (%s)", lastI2cErr,
+           i2cErrText(lastI2cErr));
     return;
   }
   dieTempC = (int8_t)tInt + (tFrac & 0x0F) * 0.0625f;
@@ -320,6 +457,7 @@ static void runMaxTests() {
 
 static bool maxUsable() { return results[T_I2C_SCAN] == R_PASS && results[T_PART_ID] == R_PASS; }
 
+#if ENABLE_TFT
 // ---- TFT readback (bit-banged) ---------------------------------------------
 // The ST7735S shares one bidirectional SDA line for writes and reads, and the
 // module has no MISO wire, so reads can't go through the SPI peripheral. This
@@ -489,6 +627,9 @@ static void drawSummary() {
   tft.setCursor(0, 114);
   tft.print(buf);
 }
+#else
+static void drawSummary() {}
+#endif
 
 static void printSummary() {
   Serial.println("---- Resumen ----");
@@ -500,12 +641,19 @@ static void printSummary() {
 
 // ---- Live mode ---------------------------------------------------------------
 static bool live = false;
+#if ENABLE_TFT
 static uint32_t hist[HIST_N];
 static uint16_t histHead = 0;
 static bool histPrimed = false;
+#endif
 static uint32_t lastIr = 0, lastRed = 0;
 static uint32_t lastDraw = 0;
 static uint8_t i2cFails = 0;
+
+// Live-mode debug counters, reported once per second by liveStats().
+static uint32_t statsAt = 0;
+static uint16_t samplesInWindow = 0;
+static uint8_t fifoWr = 0, fifoOvf = 0, fifoRd = 0;
 
 static bool startLive() {
   Wire.setClock(400000);
@@ -515,31 +663,40 @@ static bool startLive() {
             maxWrite(REG_FIFO_OVF, 0) && maxWrite(REG_FIFO_RD_PTR, 0) &&
             maxWrite(REG_MODE_CONFIG, MODE_SPO2);
   if (!ok) {
-    Serial.println("No se pudo configurar el MAX30102 para la lectura en vivo");
+    DBG("LIVE", "no se pudo configurar el MAX30102 para la lectura en vivo: err=%u (%s)",
+        lastI2cErr, i2cErrText(lastI2cErr));
     Wire.setClock(100000);
     return false;
   }
 
-  histPrimed = false;
-  lastIr = lastRed = 0;
   i2cFails = 0;
   lastDraw = 0;
+  statsAt = millis();
+  samplesInWindow = 0;
+  lastIr = lastRed = 0;
+#if ENABLE_TFT
+  histPrimed = false;
   tft.fillScreen(ST77XX_BLACK);
   tft.drawFastHLine(0, PLOT_Y - 2, TFT_W, COLOR_GRAY);
+#endif
   live = true;
+  DBG("LIVE", "sensor configurado (SpO2, 100 sps / 4 = ~25 muestras/s esperadas, I2C a 400 kHz)");
   Serial.println("Modo en vivo: ir:<n>,red:<n>");
   return true;
 }
 
 static void pushSample(uint32_t ir, uint32_t red) {
+#if ENABLE_TFT
   if (!histPrimed) { // start the plot flat at the first value instead of at 0
     for (uint16_t i = 0; i < HIST_N; i++) hist[i] = ir;
     histPrimed = true;
   }
   hist[histHead] = ir;
   histHead = (histHead + 1) % HIST_N;
+#endif
   lastIr = ir;
   lastRed = red;
+  samplesInWindow++;
   Serial.printf("ir:%lu,red:%lu\n", (unsigned long)ir, (unsigned long)red);
 }
 
@@ -547,9 +704,16 @@ static void pollFifo() {
   uint8_t ptrs[3]; // WR_PTR, OVF_COUNTER, RD_PTR are consecutive registers
   if (!maxReadBytes(REG_FIFO_WR_PTR, ptrs, 3)) {
     i2cFails++;
+    if (i2cFails == 1) { // log only the first failure of a streak, not all of them
+      DBG("I2C", "fallo al leer los punteros del FIFO: err=%u (%s)", lastI2cErr,
+          i2cErrText(lastI2cErr));
+    }
     return;
   }
   i2cFails = 0;
+  fifoWr = ptrs[0];
+  fifoOvf = ptrs[1];
+  fifoRd = ptrs[2];
 
   uint8_t pending = (uint8_t)(ptrs[0] - ptrs[2]) & 0x1F;
   if (pending == 0 && ptrs[1] != 0) pending = 32; // FIFO overran and wrapped
@@ -571,6 +735,7 @@ static void pollFifo() {
   }
 }
 
+#if ENABLE_TFT
 static void drawLive() {
   char buf[16];
   bool finger = lastIr > FINGER_IR_THRESHOLD;
@@ -608,54 +773,135 @@ static void drawLive() {
   }
   tft.drawRGBBitmap(0, PLOT_Y, plot.getBuffer(), TFT_W, PLOT_H);
 }
+#else
+static void drawLive() {}
+#endif
+
+// One line per second while streaming: tells "no samples" from "samples but no finger".
+static void liveStats() {
+  if (millis() - statsAt < 1000) return;
+  statsAt = millis();
+  const char *hint = samplesInWindow == 0 ? "SIN MUESTRAS NUEVAS (FIFO vacio)"
+                     : (lastIr == 0 && lastRed == 0) ? "IR y RED en 0 (LEDs sin senal)"
+                     : (lastIr > FINGER_IR_THRESHOLD) ? "dedo detectado"
+                                                      : "sin dedo";
+  DBG("LIVE", "%u muestras/s | ir=%lu red=%lu | FIFO wr=%u rd=%u ovf=%u | fallos I2C=%u | INT=%d | %s",
+      samplesInWindow, (unsigned long)lastIr, (unsigned long)lastRed, fifoWr, fifoRd, fifoOvf,
+      i2cFails, digitalRead(PIN_INT_OX), hint);
+  samplesInWindow = 0;
+}
 
 static void loseLive() {
   live = false;
   Wire.setClock(100000);
   results[T_I2C_SCAN] = R_FAIL;
   results[T_PART_ID] = results[T_DIE_TEMP] = results[T_INT_PIN] = R_NA;
-  Serial.println("El MAX30102 dejo de responder, reintentando cada 2 s...");
+  DBG("I2C", "el MAX30102 dejo de responder (%u fallos seguidos), ultimo error: %u (%s)",
+      i2cFails, lastI2cErr, i2cErrText(lastI2cErr));
+  dbgI2cLines("al perder el sensor");
+  Serial.println("Reintentando cada 2 s...");
   drawSummary();
+}
+
+// Fast blink while the sensor is missing, slow blink while streaming.
+static void ledHeartbeat() {
+  static uint32_t last = 0;
+  static bool on = false;
+  if (millis() - last < (live ? LED_PERIOD_LIVE_MS : LED_PERIOD_IDLE_MS)) return;
+  last = millis();
+  on = !on;
+  ledSet(on);
 }
 
 // ---- Arduino entry points -----------------------------------------------------
 void setup() {
+  // 3 quick blinks first: proves the firmware started even if Serial never shows up.
+  pinMode(PIN_LED, OUTPUT);
+  for (uint8_t i = 0; i < 3; i++) {
+    ledSet(true);
+    delay(80);
+    ledSet(false);
+    delay(120);
+  }
+  ledSet(true); // solid on while setup() runs
+
   Serial.begin(115200);
   uint32_t start = millis();
   while (!Serial && millis() - start < 4000) delay(10); // USB-CDC: wait for the monitor to attach
+  uint32_t waited = millis() - start;
+  bool monitorAttached = Serial;
   delay(300);
 
   Serial.println();
-  Serial.println("=== PulsOx - test de perifericos (MAX30102 + TFT ST7735S) ===");
+  Serial.printf("=== PulsOx - test de perifericos (MAX30102%s) ===\n",
+                ENABLE_TFT ? " + TFT ST7735S" : ", TFT deshabilitado");
+  DBG("BOOT", "setup() iniciado. Monitor serie %s (espera: %lu ms)",
+      monitorAttached ? "conectado" : "NO detectado (si lo abris ahora, apreta RESET)",
+      (unsigned long)waited);
+  printBootInfo();
 
+#if ENABLE_TFT
   pinMode(PIN_BL_TFT, OUTPUT);
   digitalWrite(PIN_BL_TFT, BL_ON);
+#endif
 
-  Wire.begin(PIN_SDA_OX, PIN_SCL_OX);
+  pinMode(PIN_INT_OX, INPUT_PULLUP);
+  i2cPreCheck();
+  bool wireOk = Wire.begin(PIN_SDA_OX, PIN_SCL_OX);
   Wire.setClock(100000);
+  DBG("I2C", "Wire.begin(SDA=GPIO%d, SCL=GPIO%d) -> %s, 100 kHz", PIN_SDA_OX, PIN_SCL_OX,
+      wireOk ? "ok" : "ERROR");
+  dbgI2cLines("con el bus iniciado");
+
+  DBG("BOOT", "corriendo tests del MAX30102...");
   runMaxTests();
 
+#if ENABLE_TFT
   testLcd();
   visualPattern();
+#else
+  skipTest(T_LCD_READBACK, "TFT deshabilitado (ENABLE_TFT=0 en main.cpp)");
+#endif
   drawSummary();
   printSummary();
-  delay(3000);
+  delay(SUMMARY_HOLD_MS);
 
-  if (maxUsable()) startLive();
+  if (maxUsable()) {
+    startLive();
+  } else {
+    DBG("BOOT", "sin sensor utilizable: LED en parpadeo rapido, reintento cada %d ms", RETRY_INTERVAL_MS);
+  }
+  DBG("BOOT", "setup() terminado");
 }
 
 void loop() {
+  static bool firstLoop = true;
+  if (firstLoop) {
+    firstLoop = false;
+    DBG("BOOT", "entrando a loop()");
+  }
+  ledHeartbeat();
+
   if (!live) {
     static uint32_t lastTry = 0;
+    static uint32_t attempts = 0;
     if (millis() - lastTry < RETRY_INTERVAL_MS) return;
     lastTry = millis();
-    if (!maxPresent()) return;
+    attempts++;
 
-    Serial.println("MAX30102 detectado, repitiendo tests...");
+    uint8_t err = maxProbe();
+    if (err != 0) {
+      DBG("I2C", "reintento #%lu: 0x57 sin respuesta, err=%u (%s) | SDA=%d SCL=%d INT=%d | heap %u B",
+          (unsigned long)attempts, err, i2cErrText(err), digitalRead(PIN_SDA_OX),
+          digitalRead(PIN_SCL_OX), digitalRead(PIN_INT_OX), (unsigned)ESP.getFreeHeap());
+      return;
+    }
+
+    DBG("I2C", "0x57 detectado en el reintento #%lu, repitiendo tests...", (unsigned long)attempts);
     runMaxTests();
     drawSummary();
     printSummary();
-    delay(3000);
+    delay(SUMMARY_HOLD_MS);
     if (maxUsable()) startLive();
     return;
   }
@@ -665,6 +911,7 @@ void loop() {
     loseLive();
     return;
   }
+  liveStats();
 
   if (millis() - lastDraw >= LIVE_REFRESH_MS) {
     lastDraw = millis();

@@ -40,10 +40,20 @@ output. Si igual se te pasó, apretá reset (o desenchufá y volvé a enchufar).
 Si tu placa no la reconoce como `esp32-c3-devkitm-1`, probá con `lolin_c3_mini`
 en `platformio.ini` (igual que en `battery-test`).
 
+## Probar solo el sensor (sin TFT conectado)
+
+La pantalla viene **deshabilitada por defecto** (`#define ENABLE_TFT 0` al
+principio de `src/main.cpp`). En ese modo no se compila nada del TFT: no se
+tocan los pines de la pantalla, el test 5 queda como `N/D` y todo se reporta
+solo por Serial (incluido el modo en vivo con `ir:<n>,red:<n>`).
+
+Cuando conectes la pantalla, poné `ENABLE_TFT` en `1` (o compilá con
+`-DENABLE_TFT=1`) y reflasheá.
+
 ## Qué hace
 
 Al arrancar corre estos tests y reporta `PASS` / `FAIL` / `N/D` por Serial y en
-la pantalla:
+la pantalla (esta última solo con `ENABLE_TFT 1`):
 
 1. **I2C scan**: lista todo lo que responde en el bus y espera encontrar `0x57`.
 2. **MAX PART_ID**: lee `PART_ID` (esperado `0x15`) y hace un soft reset.
@@ -74,6 +84,38 @@ muestras/s, LEDs a ~7 mA):
 Si el MAX30102 no respondió, se queda en el resumen y reintenta detectarlo
 cada 2 s: podés mover cables o retocar soldaduras sin volver a flashear.
 Lo mismo si deja de responder en medio de la lectura en vivo.
+
+## Debug: ¿está vivo el ESP32?
+
+**LED integrado (GPIO8)**, funciona aunque el Serial no muestre nada:
+
+| LED | Significado |
+|---|---|
+| 3 parpadeos rápidos al encender | El firmware arrancó |
+| Fijo encendido | Dentro de `setup()` (esperando el monitor serie hasta 4 s, o corriendo tests) |
+| Parpadeo rápido (4 Hz) | En `loop()`, MAX30102 sin detectar, reintentando |
+| Parpadeo lento (1 Hz) | En `loop()`, leyendo el sensor en vivo |
+
+Si no ves ni los 3 parpadeos: el ESP32 no está corriendo (modo boot, sin
+alimentación, o el LED de tu placa es activo en alto → invertí `LED_ON_LEVEL`).
+
+**Serial**: cada línea de debug es `[uptime ms][TAG] mensaje`.
+
+- `BOOT`: causa del último reset (power-on, pin RESET, **BROWNOUT**, **CRASH**),
+  si había monitor conectado, chip/heap, y marcas de `setup()` / `loop()`.
+- `I2C`: nivel de SDA / SCL / INT, y en cada fallo el código crudo de
+  `Wire.endTransmission()`:
+  - `err=2` NACK en la dirección: nadie responde en 0x57 (alimentación,
+    soldadura, dirección).
+  - `err=5` timeout: SDA o SCL trabadas en bajo (corto o pull-up a 1.8 V).
+- Antes de iniciar el I2C hace un **pre-check de las líneas**: con el módulo
+  alimentado, SDA y SCL deben leer `1` sin pull-up interno. Distingue
+  "no hay pull-up externo" de "línea sujeta en bajo".
+- Mientras el sensor falta: una línea cada 2 s con el error I2C y los niveles
+  SDA/SCL/INT (así, aunque abras el monitor tarde, ves el estado actual).
+- En vivo: una línea por segundo con `muestras/s` (esperado ~25), IR/RED,
+  punteros del FIFO y un diagnóstico (`SIN MUESTRAS NUEVAS`, `IR y RED en 0`,
+  `dedo detectado` / `sin dedo`).
 
 ## Qué esperar / troubleshooting
 
