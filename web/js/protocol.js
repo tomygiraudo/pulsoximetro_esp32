@@ -1,6 +1,11 @@
 // Parsing + validation for the telemetry protocol defined in PROTOCOL.md,
 // and the pure classification logic that turns a reading into a
 // good/warning/critical/unknown status given the current thresholds.
+//
+// NOTE: the field layout of `measurement_start`, `measurement_end` and `ppg`
+// is still PENDING in PROTOCOL.md. This client is deliberately permissive with
+// them (it only relies on the `type` and, for `ppg`, on a numeric `samples`
+// array) so the firmware packet design can still change.
 
 const DEFAULT_THRESHOLDS = Object.freeze({
   spo2Good: 95, // >= this is normal
@@ -10,6 +15,15 @@ const DEFAULT_THRESHOLDS = Object.freeze({
   bpmLowWarning: 50, // [bpmLowWarning, bpmLowGood) and (bpmHighGood, bpmHighWarning] are caution
   bpmHighWarning: 120,
 });
+
+const KNOWN_FRAME_TYPES = Object.freeze([
+  "hello",
+  "measurement_start",
+  "measurement_end",
+  "telemetry",
+  "ppg",
+  "status",
+]);
 
 /** Parses one WebSocket text frame. Returns null (and logs) on malformed JSON
  * or an unrecognized/missing `type` — the caller should simply drop it,
@@ -26,11 +40,22 @@ function parseTelemetryFrame(raw) {
     console.warn("[protocol] frame missing type, dropping", msg);
     return null;
   }
-  if (msg.type !== "hello" && msg.type !== "telemetry" && msg.type !== "status") {
+  if (!KNOWN_FRAME_TYPES.includes(msg.type)) {
     console.warn("[protocol] unknown frame type, dropping", msg.type);
     return null;
   }
   return msg;
+}
+
+/** Extracts the PPG samples of a `ppg` frame. Returns null if the frame has
+ * no usable numeric `samples` array. `fs` (Hz) falls back to `fallbackFs`
+ * when the frame does not carry one. */
+function extractPpgSamples(msg, fallbackFs = 50) {
+  if (!msg || !Array.isArray(msg.samples) || msg.samples.length === 0) return null;
+  const samples = msg.samples.filter((v) => typeof v === "number" && Number.isFinite(v));
+  if (samples.length === 0) return null;
+  const fs = typeof msg.fs === "number" && msg.fs > 0 ? msg.fs : fallbackFs;
+  return { samples, fs };
 }
 
 function classifySpo2(spo2, thresholds = DEFAULT_THRESHOLDS) {

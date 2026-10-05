@@ -56,6 +56,20 @@ class ConnectionManager {
     this._simulator.stop();
   }
 
+  /** Demo only: simulates pressing the measurement button on the device. */
+  startDemoMeasurement() {
+    if (this._mode === "demo") this._simulator.startMeasurement();
+  }
+
+  /** Demo only: simulates the end of the measurement. */
+  stopDemoMeasurement() {
+    if (this._mode === "demo") this._simulator.stopMeasurement();
+  }
+
+  get isDemoMeasuring() {
+    return this._mode === "demo" && this._simulator.isMeasuring;
+  }
+
   _openSocket() {
     this._clearReconnectTimer();
     this._onState(this._reconnectAttempt > 0 ? "reconnecting" : "connecting");

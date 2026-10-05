@@ -1,146 +1,110 @@
-# Dashboard — Page Override
+# Pantallas — Override de `MASTER.md`
 
-> Overrides `MASTER.md` for the pulse-oximetry dashboard screen. Landing-page
-> patterns (App Store hero, download CTAs, GSAP grid stagger) from Master do
-> **not** apply here — this is a single-screen real-time monitoring app, not a
-> marketing page. Master's color tokens, typography, spacing scale, shadow
-> depths and pre-delivery checklist still apply.
+> Especificación de las tres vistas de la app (Historial · Dashboard ·
+> Ajustes) y de la barra de navegación. Prevalece sobre `MASTER.md` en lo que
+> contradiga. Tokens, tipografía, formas y anti-patrones de Master siguen
+> vigentes.
 
-## Status palette (fixed — validated, never themed)
+## Navegación inferior
 
-Sourced from the `dataviz` skill's reference palette and run through
-`validate_palette.js`. These three are reserved for physiological state and
-are never reused as decorative or brand color.
+Barra fija abajo, ancho de la columna (máx. 520 px), con tres destinos en este
+orden: **Historial · Dashboard · Ajustes** (el dashboard al centro, vista por
+defecto).
 
-| Role | Hex | CSS Variable | Contrast on light surface | Usage |
-|---|---|---|---|---|
-| Good / normal | `#0CA30C` | `--color-status-good` | 3.27:1 | Icon, ring, chart zone tint |
-| Caution | `#FAB219` | `--color-status-warning` | 1.79:1 | Icon + badge fill only — never as sole text color (sub-AA) |
-| Danger | `#D03B3B` | `--color-status-critical` | 4.68:1 | Icon, ring, chart zone tint, can carry small text |
+- Rutas por hash: `#/history`, `#/dashboard`, `#/settings`.
+- Cada destino es un `<a>` de ≥ 56 px de alto con ícono (22 px) sobre etiqueta
+  (12 px). El activo lleva `aria-current="page"`, ícono en `--color-primary`
+  sobre una cápsula `--color-primary-tint` de 60 × 32 px, y etiqueta en negrita
+  color `--color-foreground`; los inactivos van en `--color-muted`.
+- Fondo `--color-surface`, filete superior `--color-line`, padding inferior con
+  `env(safe-area-inset-bottom)`. El contenido reserva ese alto para que nada
+  quede tapado.
+- Al cambiar de vista: scroll arriba, `document.title` = "PulsOx — <vista>" y el
+  foco pasa al `h1` de la vista.
 
-**Rule:** status is never color-alone. Every status surface pairs the color
-with an SVG icon (check-circle / alert-triangle / alert-octagon) **and** a
-text label ("Normal" / "Precaución" / "Peligro"). Caution's low contrast
-(1.79:1) means amber is used as a background tint or icon/ring color, with
-label text rendered in `--color-foreground`, never in raw amber-on-white.
+## Dashboard
 
-Dark surface variants (same roles, stepped for `#1a1a19`-class backgrounds):
-`--color-status-good-dark: #0ca30c` (already ≥3:1 dark), `--color-status-warning-dark: #fab219`, `--color-status-critical-dark: #e35b5b`.
+Entra en una sola pantalla de 390 × 844 (sin scroll), de arriba abajo:
 
-## KPI Hero Card (SpO2 / BPM)
+1. **Cabecera:** marca "PulsOx" a la izquierda; a la derecha el pill de conexión
+   (`En vivo` / `Conectado` / `Demo` / `Reconectando…` / `Sin conexión`, siempre
+   con punto + texto) y el chip de batería (solo si el dispositivo la informa;
+   `< 20 %` → ícono ámbar y "· baja").
+2. **Titular de estado** (h1, 26 px) con ícono de estado, y una línea de apoyo.
+   Es lenguaje natural, no una etiqueta:
 
-The dominant component — must be legible at arm's length on a phone screen.
+   | Situación | Titular |
+   |---|---|
+   | Sin conexión / conectando | "Sin conexión" / "Conectando…" |
+   | Conectado, sin medición | "Listo para medir" — "Presioná el botón de medición del dispositivo para empezar." |
+   | Midiendo, sin dedo | "Esperando lectura" |
+   | Midiendo, señal sin estabilizar | "Calibrando…" |
+   | Midiendo, todo normal | "Todo en rango" |
+   | Midiendo, algún valor en precaución | "Fuera del rango habitual" |
+   | Midiendo, algún valor en peligro | "Valores críticos" + motivo + "Si te sentís mal, buscá atención médica." |
 
-```
-┌─────────────────────────────────┐
-│ SpO2                    [●icon] │  ← label 14px, uppercase, muted
-│                                  │
-│        97 %                     │  ← 72–88px, Figtree 700, tabular-nums
-│                                  │
-│  ● Normal                       │  ← status pill: icon + label, 16px 600
-└─────────────────────────────────┘
-```
+   Durante la medición la línea de apoyo lleva el cronómetro ("Midiendo · 00:23").
+3. **Tarjeta SpO₂:** gauge de anillo abierto (270°, escala fija 80–100 %) con el
+   valor en 66 px al centro y el pill de estado en el hueco inferior. El arco
+   toma el color del estado, con halo suave; la pista queda en `--color-track`.
+   Dos muescas marcan los umbrales de "Precaución" y "Normal" (siguen a los
+   umbrales configurados).
+4. **Tarjeta frecuencia cardíaca:** valor en 52 px + "lpm" y, a la derecha, el
+   pill de estado.
+5. **Tarjeta Señal PPG:** título + etiqueta "Filtrada" y, a la derecha, la
+   calidad de señal en cinco barras (solo con dedo). Debajo, la traza en vivo:
 
-- Container: `.card` from Master (radius 12px, `--shadow-md`), background
-  tints toward the active status color at ~6% opacity (`color-mix` or a
-  precomputed tinted variable), left border 4px solid status color — this is
-  the *decorative reinforcement*, not the only signal.
-- Number: `font-family: Figtree; font-weight: 700; font-size: clamp(56px, 16vw, 88px); font-variant-numeric: tabular-nums;` — tabular nums so digits don't jitter the layout on every update.
-- Status pill: icon (Lucide/Heroicons outline, 20px) + label text, background = status color at 12% opacity, text = `--color-foreground` (never the raw status hex for body text, per contrast rule above).
-- No finger / no signal state overrides the whole card: number replaced with
-  an em-dash `—`, pill reads "Colocá el dedo en el sensor" in muted gray, no
-  status color applied (this is "unknown", not "danger").
-- Update transition: number cross-fades 200ms on change (Soft UI Evolution
-  motion spec), never an instant snap — but no animated counting/odometer
-  effect (adds latency perception to a live vital sign, avoid).
+   - Ventana de 6 s, dibujada en canvas; una línea punteada por segundo, línea
+     base y rótulos "−6 s" / "ahora".
+   - Trazo violeta (`--color-violet`) que se desvanece hacia la izquierda y
+     alcanza su máxima intensidad en el borde vivo, con un punto en la muestra
+     más reciente y un relleno suave debajo.
+   - Eje vertical autoescalado y suavizado (sin unidades): la señal ya llega
+     filtrada y con el pico sistólico hacia arriba.
+   - Sin señal (en espera, sin dedo, sin conexión) la traza se reemplaza por una
+     línea punteada y un mensaje centrado.
 
-## Two KPI cards, not one combined card
+**Estados del valor:** sin dato → guion "—" en `--color-muted`; lectura inválida
+aislada → se conserva el último valor válido hasta 5 s ("mostrar el último
+estado conocido, no vaciar la pantalla"); el pill dice "Calibrando…" si pasan
+más de 5 s sin lectura válida.
 
-SpO2 and BPM each get their own hero card, stacked on mobile (`< 640px`),
-side-by-side on tablet/desktop (`≥ 640px`, `grid-template-columns: 1fr 1fr`).
-Rationale: two independent vitals with independent thresholds and independent
-"no signal" states — merging them into one card would force a shared status
-color when SpO2 and BPM can disagree (e.g. SpO2 normal, BPM elevated).
+**Modo demo:** debajo del titular aparece un botón suave "Simular botón de
+medición" / "Detener medición (demo)". En producción no existe: la medición la
+inicia el botón físico del dispositivo.
 
-## Signal quality bar
+## Historial
 
-Thin secondary indicator under both KPI cards, not a chart:
-`height: 6px; border-radius: 3px;` track in `--color-muted`, fill in
-`--color-primary`, width = `signal_quality * 100%`. Label "Calidad de señal"
-12px muted. Only rendered when `finger_detected: true`.
+- Cabecera: h1 "Historial" y a la derecha el conteo de mediciones.
+- **Tarjeta de tendencia:** segmented "SpO₂ | Frecuencia" (una magnitud por vez,
+  nunca dos ejes), gráfico de línea con área degradada, bandas de zona
+  (rojo / ámbar / verde según umbrales) y punto final; ticks del eje Y en los
+  umbrales y cinco rótulos de tiempo repartidos por igual. Debajo, segmented de
+  rango "2 min | 10 min | 1 h" en tinta.
+- **Lecturas:** título de sección, chips `Todas | Precaución | Peligro` y una
+  lista **agrupada por medición**. Cada grupo lleva "Hoy · 14:32" y "Medición
+  de 1 min 20 s" ("En curso" si sigue abierta). Cada fila: ícono de estado en
+  cuadrado tintado (40 px), "97 % SpO₂ · 72 lpm", la etiqueta del estado y la
+  hora (HH:MM:SS) a la derecha. El historial anterior al agrupamiento aparece
+  como "Lecturas anteriores".
+- Vacío: ícono + "Todavía no hay mediciones. Iniciá una desde el dashboard." (o
+  "No hay lecturas con este filtro.").
 
-## Charts (see `dataviz` skill for full method)
+## Ajustes
 
-**Two separate single-series line charts, never one dual-axis chart** — SpO2
-(%) and BPM (bpm) have incompatible scales, so combining them on twin y-axes
-was rejected per the dataviz skill's anti-pattern rule.
+Grupos en tarjetas con título en mayúsculas pequeñas: **Conexión** (dirección
+WebSocket, botón "Conectar", switch "Modo demo", datos del dispositivo),
+**Apariencia** (segmented **Claro** | Oscuro | Auto; Claro es el predeterminado),
+**Umbrales de SpO₂**, **Umbrales de frecuencia** (campos numéricos de 52 px en
+grilla de 2 columnas; sin sliders: en una lectura de salud importa la
+precisión), **Historial** ("Borrar historial", destructivo, con confirmación en
+un segundo toque) y el aviso de que la app no es un dispositivo médico.
 
-| Chart | Line color | Y range | Zone tints (bg bands, ~8% opacity) |
-|---|---|---|---|
-| SpO2 history | `--color-primary` `#0891B2` | 80–100% | red < 90, amber 90–94, green ≥ 95 |
-| BPM history | violet `#4A3AA7` (categorical slot, kept distinct from status hues) | 40–160 bpm | red < 50 / > 120, amber 50–59 / 101–120, green 60–100 |
+## Anti-patrones específicos de estas pantallas
 
-- Marks: 2px line, no point markers by default (real-time density), 4px
-  rounded cap at the live end.
-- No legend box (single series — chart title names it, per dataviz rule).
-- Hover/touch: crosshair + tooltip showing exact value and relative time
-  ("hace 12s"). On mobile this is touch-drag along the line, not hover.
-- Time-range control: pill group above each chart — `2 min | 10 min | 1 h` —
-  standard UI control, not part of the chart itself.
-- Pause/resume control (chart domain rule for streaming data ≥1Hz): a single
-  icon button top-right of the chart card; paused state freezes rendering but
-  telemetry keeps buffering underneath so resuming doesn't lose data.
-- `prefers-reduced-motion`: disable the line's draw-in animation and the
-  cross-fade on new points; data still updates, just without the tween.
-
-## History list
-
-Reverse-chronological list below the charts, one row per stored reading
-(not every raw packet — see `web/js/history.js` for the throttling rule).
-
-```
-[● icon]  97% SpO2   ·   74 bpm         hace 3 min
-          Normal
-```
-
-- Row height ≥ 44px (touch target minimum), 8px vertical rhythm between rows.
-- Leading status icon (16px) in the row's status color; trailing relative
-  timestamp in `--color-foreground` muted, absolute time on tap/hover
-  (title attribute + optional detail row).
-- Filter chip row above the list: `Todas | Precaución | Peligro` — lets the
-  user find the moments that mattered without scrolling a long normal-reading
-  log.
-- Empty state: centered icon + "Todavía no hay lecturas" — never a blank
-  white area.
-
-## Connection / mode badge (header)
-
-Small pill in the header, always visible:
-
-| State | Color | Label |
-|---|---|---|
-| Live (WebSocket connected) | `--color-status-good` dot + text | "En vivo" |
-| Demo mode | `--color-secondary` dot + text | "Demo" |
-| Reconnecting | `--color-status-warning` dot (pulsing, respects reduced-motion) | "Reconectando…" |
-| Disconnected | `--color-muted` dot | "Sin conexión" |
-
-## Settings drawer
-
-Bottom sheet on mobile (`< 640px`), right-side panel on desktop. Contains:
-WebSocket URL field (persisted to `localStorage`), demo-mode toggle,
-threshold editors for SpO2/BPM zone boundaries (number inputs, not sliders —
-precision matters for a health reading), "Borrar historial" destructive
-action behind a confirm step, unit info, and the medical disclaimer.
-
-## Anti-patterns specific to this page (in addition to Master's list)
-
-- ❌ Dual-axis chart combining SpO2 and BPM.
-- ❌ Status conveyed by background color alone on any element (icon + label
-  always accompany it).
-- ❌ Odometer/count-up animation on the hero number (misrepresents a live
-  vital as if it were "loading up" to a value).
-- ❌ Auto-clearing or truncating history without an explicit user action.
-- ❌ Blocking the UI or showing a spinner while WebSocket reconnects — the
-  last known reading stays visible with the connection badge reflecting
-  staleness, per the "show last known state, don't blank the screen" rule
-  for live dashboards.
+- ❌ Mostrar lecturas o traza PPG antes de recibir el paquete de inicio.
+- ❌ Dibujar la traza PPG con el dedo fuera del sensor.
+- ❌ Procesar o filtrar la señal PPG en el cliente (llega acondicionada).
+- ❌ Un eje doble SpO₂ + frecuencia.
+- ❌ Estado por color solo (siempre ícono + texto).
+- ❌ Vaciar el valor por una única lectura inválida.
