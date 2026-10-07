@@ -83,3 +83,7 @@ componentes (tarjetas KPI, gráficos, historial) usados por el dashboard.
 - Firmware ESP32-C3: lectura del MAX30102, cálculo de SpO2/BPM, servidor
   WebSocket implementando `PROTOCOL.md`.
 - Conectar la web app al dispositivo real y validar el modo `live` end-to-end.
+
+
+# GOOGLE COLAB
+https://colab.research.google.com/drive/18P-XyyEuqM189sJWGMnf9TlH9UD-HeR_?usp=sharing 
