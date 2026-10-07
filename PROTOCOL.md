@@ -24,6 +24,13 @@ navegador móvil moderno (Android e iOS) sin pairing previo. El ESP32 puede
 operar en modo AP (crea su propia red `PulsOx-XXXX`) o en modo STA (se une a
 la WiFi de casa) — el dashboard solo necesita la IP.
 
+> **Transporte alternativo: la nube.** Un navegador bloquea `ws://` desde una
+> página `https://` (contenido mixto), y el historial en `localStorage` no se
+> comparte entre dispositivos. Por eso existe un segundo transporte en el que el
+> ESP32 escribe en una Realtime Database de Firebase y la web la lee (ver
+> [Transporte en la nube](#transporte-en-la-nube-firebase-realtime-database)).
+> Los paquetes son los mismos y el WebSocket LAN sigue funcionando.
+
 Todos los mensajes son JSON, un objeto por frame de texto. El campo `type`
 identifica el tipo de mensaje.
 
@@ -92,6 +99,12 @@ otro campo se ignora. El simulador envía:
 ```json
 { "type": "measurement_start", "session_id": "sim-1700000000000", "uptime_ms": 5120 }
 ```
+
+En el [transporte en la nube](#transporte-en-la-nube-firebase-realtime-database)
+la web sintetiza este paquete con dos campos que la app **solo usa en ese
+transporte**: `session_id` (la push key de `sessions/<sid>`, para que la medición
+abierta coincida con el historial compartido) y `started_at` (ms epoch, para que
+el cronómetro de quien se une a mitad de medición sea correcto).
 
 ## 3. `telemetry` — lectura periódica
 
@@ -256,6 +269,174 @@ Si llegan `telemetry` o `ppg` sin un `measurement_start` previo (p. ej. el
 cliente se reconecta con una medición en curso), la app abre una medición
 implícita en lugar de descartar los datos.
 
+## Transporte en la nube (Firebase Realtime Database)
+
+Segundo transporte, para que **cualquiera con la URL de la web** vea la medición
+en vivo y el historial desde cualquier red, sin conocer la IP del ESP32 ni estar
+en su WiFi. GitHub Pages es hosting estático (no guarda datos ni acepta
+conexiones) y el ESP32 no puede ser cliente de la *página*; lo que sí se puede es
+que **los dos sean clientes del mismo servicio en la nube**:
+
+```
+ESP32 ──HTTPS (REST, con login)──►  Firebase Realtime DB  ◄──REST + streaming (EventSource), lectura pública──  Web (Pages, cualquier celular/PC)
+```
+
+- **Solo el dispositivo escribe.** La lectura es pública (sin login); la
+  escritura la permite únicamente el `uid` del usuario del dispositivo
+  ([`tools/cloud/database.rules.json`](tools/cloud/database.rules.json)).
+- **La medición se inicia solo con el botón del dispositivo**; la app no manda
+  comandos. Por eso el ESP32 puede dormir en deep sleep entre mediciones: no
+  tiene que estar escuchando.
+- Se guardan **valores crudos**. El estado (normal / precaución / peligro) lo
+  calcula cada cliente con *sus* umbrales.
+- Las horas son del servidor (`{".sv":"timestamp"}`, abreviado `SV` abajo): el
+  ESP32 no tiene RTC ni necesita NTP.
+- Los paquetes que entiende la app son los mismos de las secciones 1–6; este
+  transporte solo cambia cómo viajan (ver [cómo lo interpreta la web](#cómo-lo-interpreta-la-web)).
+
+### Nodos
+
+```
+/devices/<deviceId>/
+  info      { device_id, fw_version, sensor, battery_pct, updated }      al arrancar y al terminar cada medición
+  live      { session_id, seq, ts, elapsed_ms, finger_detected, spo2,    PUT a 1 Hz solo durante la medición;
+              spo2_valid, bpm, bpm_valid, signal_quality, battery_pct,   se borra al terminar
+              fs, ppg:"112,340,…" }
+  sessions/<sid>  { startedAt, endedAt, readings/<pushKey> { ts, spo2, bpm, quality } }
+                                                                          sid = push key (orden cronológico);
+                                                                          readings: POST cada ~5 s con lectura válida
+```
+
+`<deviceId>` es la "llave" de la URL de lectura (`web/js/cloud-config.js` y
+`PULSOX_DEVICE_ID`): un valor no obvio y sin datos personales.
+
+**`live`** (se reemplaza completo con `PUT` cada segundo; la base no guarda
+`null`, así que un campo sin valor **se omite**):
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| `session_id` | string | Push key de la sesión (`sessions/<sid>`). |
+| `seq` | integer | Contador de la medición (1, 2, 3…). Cada `seq` nuevo es un "tick" para la web. |
+| `ts` | number | `SV`. |
+| `elapsed_ms` | integer | Milisegundos desde que se presionó el botón, medidos por el dispositivo. La web calcula con esto el inicio de la medición (quien entra a mitad ve el cronómetro correcto sin fiarse de relojes). |
+| `finger_detected` | boolean | Igual que en `telemetry`. |
+| `spo2`, `bpm` | number | Solo si hay dedo; ver `telemetry`. |
+| `spo2_valid`, `bpm_valid` | boolean | Igual que en `telemetry`. |
+| `signal_quality` | number | 0.0–1.0. |
+| `battery_pct` | integer | Se omite si no se mide. |
+| `fs` | integer | Frecuencia de muestreo del PPG en Hz. |
+| `ppg` | string | `fs` muestras enteras (1 s de señal) separadas por comas, ya filtradas, pico sistólico hacia arriba. Se omite sin dedo. Una hoja atómica (~250 B a 50 Hz) en vez de un arreglo, y un solo request por segundo con la telemetría incluida. |
+
+**`info`**: `device_id`, `fw_version`, `sensor` (strings, como en `hello`),
+`battery_pct` (se actualiza al terminar cada medición: es la batería "en
+reposo") y `updated` (`SV`).
+
+**`sessions/<sid>`**: `startedAt` (`SV`, lo escribe el `POST` que abre la
+medición), `endedAt` (`SV`, al terminar) y `readings/<pushKey>` con
+`{ ts (SV), spo2, bpm, quality }` cada ~5 s mientras haya lectura válida.
+
+### Llamadas REST del dispositivo
+
+`<db>` es el `databaseURL` (`https://<proyecto>-default-rtdb.firebaseio.com`) y
+`<auth>` el `idToken` del usuario del dispositivo (`?auth=<idToken>`). Las
+escrituras que no necesitan respuesta llevan `&print=silent` (la base contesta
+`204 No Content`).
+
+| # | Cuándo | Llamada | Cuerpo | Respuesta |
+|---|---|---|---|---|
+| 1 | Al arrancar | `POST https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=<API_KEY>` | `{"email","password","returnSecureToken":true}` | `idToken`, `refreshToken`, `expiresIn: "3600"`, `localId` |
+| 2 | Antes de que venza el token | `POST https://securetoken.googleapis.com/v1/token?key=<API_KEY>` | formulario `grant_type=refresh_token&refresh_token=…` | `id_token`, `refresh_token`, `expires_in: "3600"` |
+| 3 | Al arrancar | `PUT <db>/devices/<id>/info.json?auth=<auth>` | `info` completo | — |
+| 4 | Al arrancar | `DELETE <db>/devices/<id>/live.json?auth=<auth>` | — | — |
+| 5 | Botón de medición | `POST <db>/devices/<id>/sessions.json?auth=<auth>` | `{"startedAt": SV}` | `{"name": "<sid>"}` |
+| 6 | Cada segundo | `PUT <db>/devices/<id>/live.json?auth=<auth>` | `live` completo | — |
+| 7 | Cada ~5 s (lectura válida) | `POST <db>/devices/<id>/sessions/<sid>/readings.json?auth=<auth>` | `{"ts": SV, "spo2", "bpm", "quality"}` | `{"name": …}` |
+| 8 | Al terminar | `PATCH <db>/devices/<id>/sessions/<sid>.json?auth=<auth>` | `{"endedAt": SV}` | — |
+| 9 | Al terminar | `PATCH <db>/devices/<id>/info.json?auth=<auth>` | `{"battery_pct", "updated": SV}` | — |
+| 10 | Al terminar | `DELETE <db>/devices/<id>/live.json?auth=<auth>` | — | — |
+
+Notas para el firmware (la especificación ejecutable es
+[`tools/cloud/fake_device.py`](tools/cloud/fake_device.py)):
+
+- **Orden de cierre: 8, 9 y 10 al final.** Borrar `live` es la señal de
+  "medición terminada" para los visores; si va antes, el historial que refrescan
+  podría no tener todavía `endedAt`.
+- **Conexión persistente.** Un handshake TLS por cada PUT de 1 Hz costaría
+  ~1 s: mantener una sola conexión HTTPS abierta (keep-alive;
+  `HTTPClient::setReuse(true)` en el ESP32) y reabrirla si el servidor la cierra.
+- **Token.** Vence a la hora (`expiresIn: 3600`). Renovarlo con margen (p. ej. a
+  los 50 min con la llamada 2); ante un `401` hacer un login nuevo (llamada 1) y
+  reintentar una vez. Un `401` también lo devuelve una regla incumplida
+  (`.validate`, escritura de otro usuario): la API REST responde `401
+  Permission denied` ante cualquier violación de reglas.
+- **Fallos de red.** Un tick que no se pudo escribir se descarta (el siguiente
+  llega en 1 s); no acumular una cola. El historial se arma con las lecturas de
+  la llamada 7, que no necesitan 1 Hz.
+- **Arranque y deep sleep.** Al arrancar: llamadas 3 y 4 (4 limpia el `live` que
+  deja un corte de energía a mitad de medición). Antes de dormir, la medición
+  tiene que estar cerrada (8–10).
+- **Credenciales.** Email/contraseña y API key van en un archivo que no se
+  versiona (en el firmware, un header ignorado por git; en las herramientas,
+  `tools/cloud/.env`). La API key web de Firebase identifica al proyecto, no
+  autoriza nada por sí sola.
+- **Certificado.** Validar el certificado TLS contra la CA raíz que usan los
+  servidores de Google (verificarla desde el navegador antes de fijarla en el
+  firmware) en lugar de `setInsecure()`.
+- **Volumen.** Un PUT de `live` ronda los 0,5–0,6 KB: una medición de 1 h son
+  ~2 MB de subida más ~720 lecturas de ~70 B.
+
+### Cómo lo interpreta la web
+
+`web/js/cloud.js` (`CloudSource`) abre un `EventSource` a
+`<db>/devices/<id>/live.json` (la base manda `put` / `patch` con `{path, data}`
+y un `keep-alive` cada ~30 s; si antepone un `307`, el navegador lo sigue solo),
+mantiene una copia local de `live` y **sintetiza los mismos frames del
+WebSocket**, de modo que `app.js` no distingue el transporte:
+
+| Cambio en la base | Frame que recibe la app |
+|---|---|
+| `GET info.json` al abrir y al terminar cada medición | `hello` (`device_id`, `fw_version`, `sensor`, `sample_rate_hz: 1` y, si hay, `battery_pct`: la batería en reposo) |
+| Aparece `live` o cambia su `session_id` | `measurement_start` con `session_id` y `started_at` (ms epoch = hora local de recepción − `elapsed_ms`; son los dos campos que la app usa de este paquete solo en este transporte) |
+| Cada `seq` nuevo | `telemetry` y, si hay `ppg`, `ppg` (`fs` y `samples`, en ese orden) |
+| `live` se borra | `measurement_end` |
+| ~10 s sin un `seq` nuevo con la medición abierta | `measurement_end` (dispositivo apagado o sin WiFi a mitad); si vuelve a escribir, la medición se reabre |
+
+Más detalles del comportamiento:
+
+- Un `live` que ya está en la base al conectar **no se cree hasta que cambia**
+  (llega otro `seq` en 3 s): si el dispositivo perdió energía a mitad de una
+  medición, ese nodo queda para siempre y no debe mostrarse como una medición en
+  curso. Un `live` que aparece con el stream abierto arranca sin espera.
+- Sin ningún evento (ni `keep-alive`) durante 65 s se reabre el stream; ante
+  `cancel` / `auth_revoked` o un error HTTP se reintenta con backoff
+  (1 s … 15 s); al volver a la pestaña (`visibilitychange`; iOS corta las
+  conexiones en segundo plano) se reabre y se re-sincroniza.
+- Las muestras PPG llegan en lotes de 1 s: la traza se dibuja con ~1,5 s de
+  demora respecto del dedo (300 ms en el transporte LAN). La pantalla TFT del
+  dispositivo es inmediata.
+- **Historial** (`CloudHistory`): `GET <db>/devices/<id>/sessions.json?orderBy="startedAt"&limitToLast=30`
+  (requiere el `.indexOn` de las reglas). Recalcula el estado con los umbrales del
+  visor y aplica el mismo adelgazado que el historial local (primera lectura,
+  cada cambio de estado y una cada 20 s). Una sesión sin `endedAt` que no es la
+  que se está midiendo se muestra terminada en su última lectura (no "En curso").
+  Se refresca al abrir Historial, al terminar una medición y cada 10 s mientras
+  haya una medición abierta con el Historial a la vista. Es de solo lectura:
+  "Borrar historial" se deshabilita en esta fuente.
+- La app que se sirve desde GitHub Pages (HTTPS) puede usar este transporte
+  porque `fetch` / `EventSource` hacia la base también son HTTPS; el WebSocket
+  LAN (`ws://`) queda bloqueado por el navegador en una página HTTPS.
+
+### Límites y privacidad
+
+- **Datos de salud en un servicio de lectura pública.** Para un trabajo práctico
+  alcanza con un `deviceId` no obvio y sin datos personales; **no sirve como
+  producto** (sin autenticación de lectores, sin borrado por el usuario).
+- Plan sin costo de Firebase: 100 conexiones simultáneas (cada visor abierto es
+  una) y cuotas de almacenamiento y descarga; el volumen por medición es de
+  KB, pero conviene mirar el uso en la consola.
+- Las reglas se verifican contra el servicio real con
+  [`tools/cloud/check_rules.py`](tools/cloud/check_rules.py).
+
 ## Pendientes
 
 Armado de los paquetes y decisiones asociadas, a cerrar junto con el firmware:
@@ -277,5 +458,10 @@ Armado de los paquetes y decisiones asociadas, a cerrar junto con el firmware:
 - [ ] **Reconexión a mitad de medición**: ¿`hello` informa si hay una medición
       en curso (y hace cuánto empezó) para no depender de la medición
       implícita?
-- [ ] **Batería** fuera de una medición: hoy solo viaja en `telemetry`; ¿se
-      agrega a `hello`/`measurement_start` para mostrarla en reposo?
+- [ ] **Batería** fuera de una medición: por WebSocket hoy solo viaja en
+      `telemetry`; ¿se agrega a `hello`/`measurement_start` para mostrarla en
+      reposo? (En la nube ya está resuelto: `info.battery_pct`, que la web
+      entrega como `hello.battery_pct`; la app lo acepta en cualquier `hello`.)
+- [ ] **Cliente del ESP32 para la nube** (plan aparte): WiFi STA + TLS + login +
+      keep-alive, y su integración con deep sleep y el botón (GPIO0); sigue
+      [`tools/cloud/fake_device.py`](tools/cloud/fake_device.py).
