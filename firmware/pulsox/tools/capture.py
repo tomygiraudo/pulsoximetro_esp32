@@ -14,7 +14,7 @@ PlatformIO's Python, which already bundles pyserial (the `python` on the PATH
 is the Microsoft Store stub):
 
     %USERPROFILE%\\.platformio\\penv\\Scripts\\python.exe tools\\capture.py ^
-        --port COM5 --seconds 60 --label dedo_quieto
+        --port COM7 --seconds 60 --label dedo_quieto
 """
 
 import argparse
@@ -176,7 +176,7 @@ def report(rec: Recorder, base: Path) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--port", default="COM5", help="serial port (default COM5, see `pio device list`)")
+    ap.add_argument("--port", default="COM7", help="serial port (default COM7, see `pio device list`)")
     ap.add_argument("--seconds", type=float, default=60, help="capture length (default 60)")
     ap.add_argument("--label", default="captura", help="name tag for the files")
     ap.add_argument("--baud", type=int, default=115200, help="ignored by USB-CDC, kept for UART adapters")
