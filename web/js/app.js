@@ -10,10 +10,18 @@
 // Measurement lifecycle (see PROTOCOL.md): the dashboard idles until the
 // device sends its start packet (measurement button pressed); from then on
 // `telemetry` + `ppg` frames feed the readings, the PPG trace and the history.
+//
+// Data source (Ajustes > Conexion), persisted in `pulsox.source`:
+//   cloud  Firebase Realtime Database written by the ESP32 (cloud.js); shared
+//          history, works from any network. Only offered if cloud-config.js is filled in.
+//   local  WebSocket straight to the ESP32 on the same WiFi.
+//   demo   TelemetrySimulator.
+// All of them feed handleFrame() with the same frames.
 
 const STORAGE_KEYS = {
+  source: "pulsox.source", // "cloud" | "local" | "demo"
   wsUrl: "pulsox.wsUrl",
-  demoMode: "pulsox.demoMode",
+  demoMode: "pulsox.demoMode", // pre-`source` setting, only read to migrate
   theme: "pulsox.theme", // "light" (default) | "dark" | "auto"
   thresholds: "pulsox.thresholds",
 };
@@ -21,6 +29,13 @@ const STORAGE_KEYS = {
 const ROUTES = ["history", "dashboard", "settings"];
 const ROUTE_TITLES = { history: "Historial", dashboard: "Dashboard", settings: "Ajustes" };
 const THEMES = ["light", "dark", "auto"];
+const SOURCES = ["cloud", "local", "demo"];
+const SOURCE_HINTS = {
+  cloud: "Muestra la medición en vivo y el historial compartido desde cualquier red: el ESP32 sube los datos a la nube (Firebase).",
+  local:
+    "La app y el ESP32 deben estar en la misma red WiFi. Si la app se abre por https (GitHub Pages) el navegador bloquea ws://: usá la Nube o abrila por http.",
+  demo: "Simula mediciones para probar la app sin hardware.",
+};
 
 const PALETTES = {
   light: {
@@ -60,9 +75,12 @@ const LOW_BATTERY_PCT = 20;
 const DEFAULT_PPG_FS = 50;
 const HOLD_LAST_VALID_MS = 5000;
 
+const cloudConfig = resolveCloudConfig(window.PULSOX_CLOUD); // null -> the "Nube" source is not offered
+
 const state = {
   thresholds: loadThresholds(),
   theme: loadTheme(),
+  source: loadSource(),
   route: "dashboard",
   conn: "offline",
   hello: null,
@@ -82,7 +100,19 @@ const state = {
   activeFilter: "all",
 };
 
-const history = new HistoryStore();
+// Local (localStorage) history for "Red local" / "Demo"; the cloud one is read-only
+// and shared. `history` points at whichever matches the current source.
+const localHistory = new HistoryStore();
+const cloudHistory = cloudConfig
+  ? new CloudHistory({
+      config: cloudConfig,
+      getThresholds: () => state.thresholds,
+      onChange: () => {
+        if (history === cloudHistory) renderHistory();
+      },
+    })
+  : null;
+let history = localHistory;
 
 // ---------------------------------------------------------------- DOM refs
 const $ = (id) => document.getElementById(id);
@@ -120,11 +150,14 @@ const el = {
   trendTabs: $("trend-tabs"),
   rangePills: $("range-pills"),
   filterChips: $("filter-chips"),
+  sourceSegmented: $("source-segmented"),
+  sourceHint: $("source-hint"),
+  localFields: $("local-fields"),
   wsUrlInput: $("ws-url-input"),
   connectBtn: $("ws-connect-btn"),
-  demoToggle: $("demo-toggle"),
   themeSegmented: $("theme-segmented"),
   clearHistoryBtn: $("clear-history-btn"),
+  clearHistoryHint: $("clear-history-hint"),
   deviceInfo: $("device-info"),
   toast: $("toast"),
   thresholdInputs: Object.fromEntries(
@@ -215,6 +248,7 @@ function applyRoute({ focusHeading = false } = {}) {
   document.title = `PulsOx — ${ROUTE_TITLES[route]}`;
   ppg.setLive(route === "dashboard");
   if (route === "history") {
+    history.refresh?.(); // cloud: re-read the shared history
     renderHistory();
     activeTrendChart().resize();
   }
@@ -324,10 +358,22 @@ function handleFrame(msg) {
   switch (msg.type) {
     case "hello":
       state.hello = msg;
+      // the cloud source also reports the battery while the device is idle
+      if (typeof msg.battery_pct === "number") {
+        state.battery = clamp(Math.round(msg.battery_pct), 0, 100);
+        renderBattery();
+      }
       renderDeviceInfo();
       break;
     case "measurement_start":
-      beginSession();
+      // The cloud source knows the database's session id (to match the shared
+      // history) and when the measurement began (it may have started before we
+      // connected); the WebSocket packet carries neither, so the app assigns them.
+      beginSession(
+        state.source === "cloud"
+          ? { id: typeof msg.session_id === "string" ? msg.session_id : null, startedAt: msg.started_at }
+          : {}
+      );
       break;
     case "measurement_end":
       endSession();
@@ -371,11 +417,13 @@ function resetLiveValues() {
 
 /** Opens a measurement (the device's start packet, or — if telemetry shows up
  * without one, e.g. after a reconnect while the device is still measuring —
- * an implicit one). */
-function beginSession({ implicit = false } = {}) {
+ * an implicit one). `id` / `startedAt` (ms epoch) override the defaults. */
+function beginSession({ implicit = false, id = null, startedAt = null } = {}) {
   if (state.session) endSession({ silent: true });
-  const startedAt = Date.now();
-  state.session = { id: `m-${startedAt}`, startedAt, implicit };
+  const now = Date.now();
+  if (typeof startedAt !== "number" || !Number.isFinite(startedAt)) startedAt = now;
+  startedAt = clamp(startedAt, now - 24 * 3600 * 1000, now);
+  state.session = { id: id || `m-${startedAt}`, startedAt, implicit };
   resetLiveValues();
   ppg.clear();
   history.startSession({ id: state.session.id, startedAt, implicit });
@@ -477,17 +525,22 @@ function dashboardModel() {
       };
     }
     const connecting = state.conn === "connecting" || state.conn === "reconnecting";
+    const cloud = state.source === "cloud";
     return {
       title: connecting ? "Conectando…" : "Sin conexión",
       sub: connecting
-        ? "Buscando el dispositivo en la red."
-        : "Configurá la dirección del ESP32 en Ajustes, o activá el modo demo.",
+        ? cloud
+          ? "Conectando con la nube."
+          : "Buscando el dispositivo en la red."
+        : cloud
+        ? "No se pudo leer la nube. Revisá tu conexión a internet."
+        : "Configurá la dirección del ESP32 en Ajustes, o elegí otra fuente de datos.",
       summaryStatus: "unknown",
       summaryIcon: connecting ? "refresh-cw" : "wifi-off",
       spo2: { ...unknownVital, label: "Sin lectura", caption: "Sin conexión" },
       bpm: { ...unknownVital, label: "Sin lectura" },
       signal: false,
-      ppgEmpty: "Sin conexión con el dispositivo",
+      ppgEmpty: cloud ? "Sin conexión con la nube" : "Sin conexión con el dispositivo",
     };
   }
 
@@ -701,9 +754,15 @@ function renderHistory() {
 
   if (!groups.length) {
     const message =
-      state.activeFilter === "all"
-        ? "Todavía no hay mediciones. Iniciá una desde el dashboard."
-        : "No hay lecturas con este filtro.";
+      state.activeFilter !== "all"
+        ? "No hay lecturas con este filtro."
+        : history.status === "loading"
+        ? "Cargando el historial de la nube…"
+        : history.status === "error"
+        ? "No se pudo leer el historial de la nube."
+        : state.source === "cloud"
+        ? "Todavía no hay mediciones en la nube. Presioná el botón de medición del dispositivo."
+        : "Todavía no hay mediciones. Iniciá una desde el dashboard.";
     el.historyGroups.innerHTML = `<div class="history-empty">${iconSvg("history", { size: 28 })}<span>${message}</span></div>`;
     return;
   }
@@ -787,21 +846,67 @@ el.connectBtn.addEventListener("click", () => {
     return;
   }
   localStorage.setItem(STORAGE_KEYS.wsUrl, url);
-  localStorage.setItem(STORAGE_KEYS.demoMode, "false");
-  el.demoToggle.checked = false;
   connection.connectTo(url);
 });
 
-el.demoToggle.addEventListener("change", () => {
-  const on = el.demoToggle.checked;
-  localStorage.setItem(STORAGE_KEYS.demoMode, String(on));
-  if (on) {
+/** Saved source; if there is none yet, derived from the pre-`source` settings
+ * (wsUrl / demoMode), preferring the cloud when it is configured. */
+function loadSource() {
+  const saved = localStorage.getItem(STORAGE_KEYS.source);
+  if (SOURCES.includes(saved) && (saved !== "cloud" || cloudConfig)) return saved;
+  const url = localStorage.getItem(STORAGE_KEYS.wsUrl);
+  const demo = localStorage.getItem(STORAGE_KEYS.demoMode);
+  if (demo === "true") return "demo";
+  if (url) return "local";
+  if (cloudConfig) return "cloud";
+  return demo === null ? "demo" : "local"; // "local" without an address = disconnected
+}
+
+/** Switches the data source: stops the current one (closing any open
+ * measurement in the history it was writing to), swaps the history and the PPG
+ * delay, and starts the new one. */
+function setSource(source, { persist = true } = {}) {
+  if (persist) localStorage.setItem(STORAGE_KEYS.source, source);
+  connection.disconnect();
+  state.source = source;
+  state.hello = null;
+  state.battery = null;
+  history = source === "cloud" ? cloudHistory : localHistory;
+  ppg.setRenderDelay(source === "cloud" ? PPG_RENDER_DELAY_CLOUD_MS : PPG_RENDER_DELAY_MS);
+  renderSourceUi();
+  renderBattery();
+  renderDeviceInfo();
+  renderHistory();
+
+  if (source === "cloud") {
+    connection.connectCloud(cloudConfig);
+    cloudHistory.refresh();
+  } else if (source === "demo") {
     connection.startDemo();
   } else {
     const url = localStorage.getItem(STORAGE_KEYS.wsUrl);
     if (url) connection.connectTo(url);
-    else connection.disconnect();
   }
+}
+
+function renderSourceUi() {
+  el.sourceSegmented.querySelectorAll("button").forEach((b) => {
+    const on = b.dataset.source === state.source;
+    b.classList.toggle("is-active", on);
+    b.setAttribute("aria-pressed", String(on));
+  });
+  el.sourceHint.textContent = SOURCE_HINTS[state.source];
+  el.localFields.hidden = state.source !== "local";
+  // the shared cloud history belongs to the device; the viewer cannot wipe it
+  el.clearHistoryBtn.disabled = state.source === "cloud";
+  el.clearHistoryHint.hidden = state.source !== "cloud";
+}
+
+el.sourceSegmented.querySelector('[data-source="cloud"]').hidden = !cloudConfig;
+el.sourceSegmented.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-source]");
+  if (!btn || btn.dataset.source === state.source) return;
+  setSource(btn.dataset.source);
 });
 
 // --------------------------------------------------------------- theme
@@ -908,18 +1013,13 @@ applyRoute();
 renderAll();
 renderDeviceInfo();
 
-const savedUrl = localStorage.getItem(STORAGE_KEYS.wsUrl);
-const savedDemo = localStorage.getItem(STORAGE_KEYS.demoMode);
-const shouldDemo = savedDemo === "true" || (!savedUrl && savedDemo === null);
+setSource(state.source, { persist: false });
 
-if (shouldDemo) {
-  el.demoToggle.checked = true;
-  connection.startDemo();
-} else if (savedUrl) {
-  connection.connectTo(savedUrl);
-} else {
-  handleConnectionState("offline");
-}
+// While a measurement is running, keep the Historial (cloud) in step with the
+// readings the device uploads every few seconds.
+setInterval(() => {
+  if (state.route === "history" && state.session) history.refresh?.();
+}, 10000);
 
 // Service workers require a secure context; this silently no-ops when the
 // app is loaded from the ESP32 over plain http on the local network.

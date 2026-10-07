@@ -819,6 +819,12 @@ h1:focus {
   border-color: var(--color-primary);
 }
 
+.settings-subgroup {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 .field-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -938,6 +944,11 @@ h1:focus {
 .btn-primary:hover,
 .btn-destructive:hover {
   opacity: 0.88;
+}
+
+.btn-destructive:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .settings-disclaimer {

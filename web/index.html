@@ -171,21 +171,18 @@
       <div class="settings-group" style="margin-top: 14px">
         <h2 class="settings-group__title">Conexión</h2>
         <div class="settings-card">
-          <div class="field">
-            <label for="ws-url-input">Dirección del ESP32 (WebSocket)</label>
-            <input type="text" id="ws-url-input" placeholder="ws://192.168.1.42/ws" autocomplete="off" autocapitalize="off" spellcheck="false" />
+          <div class="segmented segmented--lg" id="source-segmented" role="group" aria-label="Fuente de datos">
+            <button type="button" data-source="cloud" aria-pressed="false" hidden>Nube</button>
+            <button type="button" data-source="local" aria-pressed="false">Red local</button>
+            <button type="button" data-source="demo" aria-pressed="false">Demo</button>
           </div>
-          <span class="field-hint">La app y el ESP32 deben estar en la misma red WiFi.</span>
-          <button type="button" class="btn-primary" id="ws-connect-btn">Conectar</button>
-          <div class="toggle-row">
-            <span class="toggle-row__label">
-              <strong>Modo demo</strong>
-              <span>Simula mediciones para probar la app sin hardware.</span>
-            </span>
-            <label class="switch">
-              <input type="checkbox" id="demo-toggle" aria-label="Modo demo" />
-              <span class="switch__track"></span>
-            </label>
+          <span class="field-hint" id="source-hint"></span>
+          <div class="settings-subgroup" id="local-fields" hidden>
+            <div class="field">
+              <label for="ws-url-input">Dirección del ESP32 (WebSocket)</label>
+              <input type="text" id="ws-url-input" placeholder="ws://192.168.1.42/ws" autocomplete="off" autocapitalize="off" spellcheck="false" />
+            </div>
+            <button type="button" class="btn-primary" id="ws-connect-btn">Conectar</button>
           </div>
           <span class="field-hint" id="device-info">Sin datos del dispositivo todavía.</span>
         </div>
@@ -248,6 +245,7 @@
         <h2 class="settings-group__title">Historial</h2>
         <div class="settings-card">
           <button type="button" class="btn-destructive" id="clear-history-btn"></button>
+          <span class="field-hint" id="clear-history-hint" hidden>El historial de la nube lo gestiona el dispositivo: no se puede borrar desde la app.</span>
         </div>
       </div>
 
@@ -282,6 +280,8 @@
 <script src="js/simulator.js"></script>
 <script src="js/connection.js"></script>
 <script src="js/history.js"></script>
+<script src="js/cloud-config.js"></script>
+<script src="js/cloud.js"></script>
 <script src="js/charts.js"></script>
 <script src="js/ppg.js"></script>
 <script src="js/app.js"></script>

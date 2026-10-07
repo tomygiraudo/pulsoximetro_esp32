@@ -1,7 +1,9 @@
-// Owns exactly one active data source at a time: either a live WebSocket to
-// the ESP32, or the local TelemetrySimulator (demo mode). Reconnects the
-// WebSocket with capped exponential backoff and reports connection state
-// changes so the UI badge always reflects what's actually happening.
+// Owns exactly one active data source at a time: a live WebSocket to the ESP32
+// (local network), the Firebase stream of the "cloud" source (cloud.js), or the
+// local TelemetrySimulator (demo mode). All three deliver the same frames
+// (PROTOCOL.md) through onFrame. Reconnects the WebSocket with capped
+// exponential backoff and reports connection state changes so the UI badge
+// always reflects what's actually happening (CloudSource does its own retries).
 
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 15000;
@@ -15,8 +17,9 @@ class ConnectionManager {
     this._url = null;
     this._reconnectAttempt = 0;
     this._reconnectTimer = null;
-    this._mode = "offline"; // "live" | "demo" | "offline"
+    this._mode = "offline"; // "live" (WebSocket) | "cloud" | "demo" | "offline"
     this._simulator = new TelemetrySimulator();
+    this._cloud = null;
     this._manuallyStopped = true;
   }
 
@@ -26,6 +29,8 @@ class ConnectionManager {
 
   connectTo(url) {
     this.stopDemo();
+    this._stopCloud();
+    this._closeSocket();
     this._manuallyStopped = false;
     this._url = url;
     this._mode = "live";
@@ -36,12 +41,23 @@ class ConnectionManager {
     this._manuallyStopped = true;
     this._clearReconnectTimer();
     this.stopDemo(); // no-op if a WebSocket (not the simulator) is the active source
-    if (this._ws) {
-      this._ws.close();
-      this._ws = null;
-    }
+    this._stopCloud();
+    this._closeSocket();
     this._mode = "offline";
     this._onState("offline");
+  }
+
+  /** Reads the device through the cloud database instead of the local network.
+   * @param {{deviceUrl: string, deviceId: string}} config  from resolveCloudConfig() */
+  connectCloud(config) {
+    this.disconnect(); // stops whatever was active and reports "offline" first
+    this._mode = "cloud";
+    this._cloud = new CloudSource({
+      config,
+      onFrame: (frame) => this._onFrame(frame),
+      onState: (state) => this._onState(state),
+    });
+    this._cloud.start();
   }
 
   startDemo() {
@@ -68,6 +84,19 @@ class ConnectionManager {
 
   get isDemoMeasuring() {
     return this._mode === "demo" && this._simulator.isMeasuring;
+  }
+
+  _stopCloud() {
+    if (!this._cloud) return;
+    this._cloud.stop();
+    this._cloud = null;
+  }
+
+  _closeSocket() {
+    if (!this._ws) return;
+    const socket = this._ws;
+    this._ws = null; // so its "close" event is recognised as stale
+    socket.close();
   }
 
   _openSocket() {
