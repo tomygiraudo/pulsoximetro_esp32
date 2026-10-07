@@ -1,0 +1,63 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "devices": {
+      "$deviceId": {
+        ".read": true,
+        ".write": "auth != null && auth.uid === 'REEMPLAZAR_UID_DEL_DISPOSITIVO'",
+
+        "info": {
+          ".validate": "newData.hasChildren(['device_id', 'updated'])",
+          "device_id": { ".validate": "newData.isString() && newData.val().length <= 64" },
+          "fw_version": { ".validate": "newData.isString() && newData.val().length <= 32" },
+          "sensor": { ".validate": "newData.isString() && newData.val().length <= 48" },
+          "battery_pct": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100" },
+          "updated": { ".validate": "newData.isNumber() && newData.val() <= now" },
+          "$other": { ".validate": false }
+        },
+
+        "live": {
+          ".validate": "newData.hasChildren(['session_id', 'seq', 'ts'])",
+          "session_id": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "seq": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+          "ts": { ".validate": "newData.isNumber() && newData.val() <= now" },
+          "elapsed_ms": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+          "finger_detected": { ".validate": "newData.isBoolean()" },
+          "spo2": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100" },
+          "spo2_valid": { ".validate": "newData.isBoolean()" },
+          "bpm": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 300" },
+          "bpm_valid": { ".validate": "newData.isBoolean()" },
+          "signal_quality": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1" },
+          "battery_pct": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100" },
+          "fs": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 1000" },
+          "ppg": { ".validate": "newData.isString() && newData.val().length <= 2000" },
+          "$other": { ".validate": false }
+        },
+
+        "sessions": {
+          ".indexOn": ["startedAt"],
+          "$sid": {
+            ".validate": "newData.hasChildren(['startedAt'])",
+            "startedAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
+            "endedAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
+            "readings": {
+              "$rid": {
+                ".validate": "newData.hasChildren(['ts'])",
+                "ts": { ".validate": "newData.isNumber() && newData.val() <= now" },
+                "spo2": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100" },
+                "bpm": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 300" },
+                "quality": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1" },
+                "$other": { ".validate": false }
+              }
+            },
+            "$other": { ".validate": false }
+          }
+        },
+
+        "$other": { ".validate": false }
+      }
+    }
+  }
+}
