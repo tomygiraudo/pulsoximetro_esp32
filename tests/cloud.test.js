@@ -16,6 +16,7 @@ const {
   CloudSource,
   CloudHistory,
   CLOUD_STALE_MS,
+  CLOUD_SNAPSHOT_GRACE_MS,
   CLOUD_SILENCE_MS,
   CLOUD_RECONNECT_BASE_MS,
   CLOUD_HISTORY_SESSIONS,
@@ -32,6 +33,7 @@ const {
     "CloudSource",
     "CloudHistory",
     "CLOUD_STALE_MS",
+    "CLOUD_SNAPSHOT_GRACE_MS",
     "CLOUD_SILENCE_MS",
     "CLOUD_RECONNECT_BASE_MS",
     "CLOUD_HISTORY_SESSIONS",
@@ -489,8 +491,13 @@ test("a network error (browser retries by itself) reports reconnecting and forge
 
   es.open(); // the browser reconnected: a fresh snapshot follows
   assert.equal(h.states.at(-1), "live");
-  es.put("/", sampleLive({ seq: 3, elapsed_ms: 3000 }));
+  es.put("/", sampleLive({ seq: 3, elapsed_ms: 3000 })); // the snapshot alone is not believed yet
+  assert.deepEqual(h.frames, []);
+  h.clock.advance(1000);
+  es.put("/", sampleLive({ seq: 4, elapsed_ms: 4000 })); // the device is still writing
   assert.deepEqual(h.types(), ["measurement_start", "telemetry", "ppg"]); // re-opened with the right start
+  assert.equal(h.frames[0].started_at, h.clock.t - 4000);
+  assert.equal(h.frames[1].seq, 4);
 });
 
 test("an HTTP error closes the stream: retry with capped exponential backoff, reset on open", () => {
@@ -595,12 +602,67 @@ test("stop closes the stream, silences old events and removes the listener", () 
   assert.equal(FakeEventSource.instances.length, 1);
 });
 
+// ---------------------------------------------- CloudSource: ghost snapshots
+
+/** A source whose first event is the given snapshot (not an empty one). */
+function connectedWith(snapshot) {
+  const h = makeSource();
+  h.source.start();
+  h.es.open();
+  h.es.put("/", snapshot);
+  return h;
+}
+
+test("a live node found on connect is not believed until it changes (late joiner)", () => {
+  const h = connectedWith(sampleLive({ seq: 40, elapsed_ms: 40000 }));
+  assert.deepEqual(h.frames, []); // could be the leftover of a dead device
+
+  h.clock.advance(1000);
+  h.es.put("/", sampleLive({ seq: 41, elapsed_ms: 41000 })); // the next 1 Hz write
+  assert.deepEqual(h.types(), ["measurement_start", "telemetry", "ppg"]);
+  assert.equal(h.frames[0].started_at, h.clock.t - 41000); // from the confirming write
+  assert.equal(h.frames[1].seq, 41);
+});
+
+test("a live node that never changes after connecting is a ghost: nothing is ever announced", () => {
+  const h = connectedWith(sampleLive({ seq: 7 }));
+  h.clock.advance(CLOUD_SNAPSHOT_GRACE_MS);
+  h.clock.advance(CLOUD_STALE_MS * 3);
+  assert.deepEqual(h.frames, []);
+
+  h.es.put("/", sampleLive({ seq: 7 })); // the same leftover re-sent
+  assert.deepEqual(h.frames, []);
+
+  h.es.put("/", sampleLive({ seq: 8 })); // ...until the device really writes again
+  assert.deepEqual(h.types(), ["measurement_start", "telemetry", "ppg"]);
+});
+
+test("the same seq repeated right after the snapshot does not confirm it", () => {
+  const h = connectedWith(sampleLive({ seq: 7 }));
+  h.es.put("/", sampleLive({ seq: 7 }));
+  assert.deepEqual(h.frames, []);
+});
+
+test("a live node that appears on an already-open stream starts at once (no wait)", () => {
+  const h = startedSource(); // empty snapshot first
+  h.es.put("/", sampleLive({ seq: 1, elapsed_ms: 0 }));
+  assert.deepEqual(h.types(), ["measurement_start", "telemetry", "ppg"]);
+});
+
+test("a ghost snapshot that is deleted before it is confirmed leaves no trace", () => {
+  const h = connectedWith(sampleLive({ seq: 7 }));
+  h.es.put("/", null);
+  h.clock.advance(CLOUD_SNAPSHOT_GRACE_MS + 1);
+  assert.deepEqual(h.frames, []);
+});
+
 test("a source can be restarted after stop", () => {
   const h = startedSource();
   h.source.stop();
   h.source.start();
   assert.equal(FakeEventSource.instances.length, 2);
   h.es.open();
+  h.es.put("/", null);
   h.es.put("/", sampleLive());
   assert.deepEqual(h.types(), ["measurement_start", "telemetry", "ppg"]);
 });

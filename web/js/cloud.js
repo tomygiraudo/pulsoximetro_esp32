@@ -23,6 +23,7 @@
 // tests/cloud.test.js). Depends on protocol.js and history.js (loaded first).
 
 const CLOUD_STALE_MS = 10 * 1000; // no new `seq` this long -> the device is gone
+const CLOUD_SNAPSHOT_GRACE_MS = 3000; // a `live` found on connect must change within this to be believed
 const CLOUD_SILENCE_MS = 65 * 1000; // no event at all (not even keep-alive) -> reconnect
 const CLOUD_RECONNECT_BASE_MS = 1000;
 const CLOUD_RECONNECT_MAX_MS = 15000;
@@ -125,6 +126,9 @@ class CloudSource {
     this._sid = null; // session_id of the open measurement (null = none)
     this._lastSeq = null;
     this._dead = null; // {sid, seq} of a measurement closed for silence: ignore that snapshot until it changes
+    this._snapshot = false; // the next event is the initial value a stream delivers on connect
+    this._candidate = null; // {sid, seq} of a `live` seen in the snapshot, not believed yet
+    this._candidateTimer = null;
 
     this._onVisibility = () => {
       if (this._stopped || this._doc?.visibilityState !== "visible") return;
@@ -193,6 +197,7 @@ class CloudSource {
   _open({ silent = false } = {}) {
     this._clear("_reconnectTimer");
     this._closeStream();
+    this._dropCandidate();
     if (!silent) this._onState(this._attempt > 0 ? "reconnecting" : "connecting");
 
     let es;
@@ -210,6 +215,8 @@ class CloudSource {
     es.addEventListener("open", () => {
       if (!current()) return;
       this._attempt = 0;
+      this._snapshot = true; // every (re)connection starts with the current value
+      this._dropCandidate();
       this._onState("live");
     });
     es.addEventListener("put", (e) => current() && this._onData(e, "put"));
@@ -271,6 +278,7 @@ class CloudSource {
     if (!msg || typeof msg.path !== "string") return;
     this._live = cloudApplyEvent(this._live, kind, msg.path, msg.data);
     this._sync();
+    this._snapshot = false;
   }
 
   /** Compares the local `live` copy with what was already announced and emits
@@ -279,6 +287,7 @@ class CloudSource {
     const live = this._live;
     if (!cloudIsObject(live) || typeof live.session_id !== "string") {
       this._dead = null;
+      this._dropCandidate();
       if (this._sid !== null) this._endMeasurement("ended");
       return;
     }
@@ -288,7 +297,10 @@ class CloudSource {
     const isNewSession = live.session_id !== this._sid;
     if (!isNewSession && live.seq === this._lastSeq) return; // a partial update, nothing new
 
+    if (isNewSession && !this._confirmed(live)) return;
+
     if (isNewSession) {
+      this._dropCandidate();
       this._sid = live.session_id;
       // `elapsed_ms` is the device's own stopwatch, so a viewer that joins mid-
       // measurement gets the right start without trusting its clock against the server's.
@@ -304,6 +316,35 @@ class CloudSource {
       const fs = typeof live.fs === "number" && live.fs > 0 ? live.fs : CLOUD_DEFAULT_PPG_FS;
       this._onFrame({ type: "ppg", fs, samples });
     }
+  }
+
+  /** A `live` node that is already there when the stream connects may be the
+   * leftover of a device that lost power mid-measurement (nobody deletes it).
+   * Believe it only once it changes: wait for one more write (~1 s apart on a
+   * live device); if none comes, it is a ghost and stays ignored. A `live` that
+   * appears on an already-open stream is a measurement starting: no wait. */
+  _confirmed(live) {
+    if (this._snapshot) {
+      this._candidate = { sid: live.session_id, seq: live.seq };
+      this._clear("_candidateTimer");
+      this._candidateTimer = this._setTimeout(() => {
+        this._candidateTimer = null;
+        if (!this._candidate) return;
+        this._dead = this._candidate;
+        this._candidate = null;
+      }, CLOUD_SNAPSHOT_GRACE_MS);
+      return false;
+    }
+    if (this._candidate && this._candidate.sid === live.session_id) {
+      if (live.seq === this._candidate.seq) return false; // nothing new yet
+      this._dropCandidate();
+    }
+    return true;
+  }
+
+  _dropCandidate() {
+    this._clear("_candidateTimer");
+    this._candidate = null;
   }
 
   _telemetryFrame(live) {
@@ -343,6 +384,7 @@ class CloudSource {
   /** Forgets the open measurement without announcing it. */
   _resetSession() {
     this._clear("_staleTimer");
+    this._dropCandidate();
     this._sid = null;
     this._lastSeq = null;
   }
