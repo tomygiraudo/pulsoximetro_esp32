@@ -5,6 +5,10 @@ Super Mini. **No es el firmware final de PulsOx**: solo verifica que el
 sensor responda por I2C y que la pantalla responda por SPI, y después deja
 corriendo una lectura en vivo del sensor.
 
+> **Para llevar la pantalla a otro firmware, ver [TFT.md](TFT.md)**: pinout,
+> configuración validada, código mínimo, qué copiar y qué no, y las lecciones
+> aprendidas.
+
 ## Pines (del esquemático)
 
 | Señal | GPIO | Uso |
@@ -40,15 +44,39 @@ output. Si igual se te pasó, apretá reset (o desenchufá y volvé a enchufar).
 Si tu placa no la reconoce como `esp32-c3-devkitm-1`, probá con `lolin_c3_mini`
 en `platformio.ini` (igual que en `battery-test`).
 
-## Probar solo el sensor (sin TFT conectado)
+## Flags de compilación
 
-La pantalla viene **deshabilitada por defecto** (`#define ENABLE_TFT 0` al
-principio de `src/main.cpp`). En ese modo no se compila nada del TFT: no se
-tocan los pines de la pantalla, el test 5 queda como `N/D` y todo se reporta
-solo por Serial (incluido el modo en vivo con `ir:<n>,red:<n>`).
+Están al principio de `src/main.cpp` (cada uno se puede pisar con `-D<flag>=<n>`
+en `build_flags`). Valores actuales, con la placa completa:
 
-Cuando conectes la pantalla, poné `ENABLE_TFT` en `1` (o compilá con
-`-DENABLE_TFT=1`) y reflasheá.
+| Flag | Valor | Qué hace |
+|---|---|---|
+| `ENABLE_TFT` | `1` | Con `0` no se compila nada del TFT: no se tocan sus pines, el test 5 queda `N/D` y todo sale solo por Serial. Para probar el sensor sin pantalla conectada. |
+| `TFT_USE_SOFT_SPI` | `0` | Con `1` la pantalla va por SPI por software (lento, con el init a baja velocidad). Solo para diagnóstico: separa "problema de reloj" de "problema de cableado". |
+| `TFT_PIN_TEST` | `0` | `1` o `2` corren el test de soldadura del TFT en lugar de todo lo demás (ver más abajo). |
+| `TFT_X_ADJUST` / `TFT_Y_ADJUST` | `-2` / `29` | Origen de la imagen en la RAM del controlador (para este módulo: columna 0, fila 32). Ver [TFT.md §3](TFT.md). |
+| `TFT_INIT_TAB` | `INITR_144GREENTAB` | Variante de init de la librería de Adafruit. |
+| `BL_ON` | `HIGH` | Nivel que enciende el backlight. |
+| `LED_ON_LEVEL` | `LOW` | Nivel que enciende el LED integrado (GPIO8) del Super Mini. |
+
+## Test de soldadura del TFT (`TFT_PIN_TEST`)
+
+Con `TFT_PIN_TEST` distinto de 0 en `src/main.cpp` (o `-DTFT_PIN_TEST=n`) el
+firmware **no corre ningún otro test** y maneja solo las 6 líneas de la pantalla
+(J2: 1 VCC, 2 GND, 3 CS, 4 RST, 5 A0/DC, 6 SDA, 7 SCK, 8 LED). Se mide con el
+multímetro contra GND, en los pines del **módulo**:
+
+- **`1`**: las 6 líneas en 1 lógico (3.3 V) fijas. El pin que no da 3.3 V tiene
+  la soldadura abierta o la pista cortada.
+- **`2`**: una línea en alto por vez durante 5 s (`TFT_PIN_STEP_MS`), las otras en
+  bajo, de CS a LED y repite. Si con una línea en alto otro pin también da
+  tensión hay un **puente**. Las líneas usan la menor corriente de salida, así
+  que con un puente los dos pines marcan un valor intermedio (~1.5–2 V) en lugar
+  de 3.3 V limpio.
+
+El Serial indica en cada paso qué pin está en alto y sus vecinos, y marca lo que
+el ESP32 mismo detecta (cortos a GND o a otra línea). Volver a poner
+`TFT_PIN_TEST` en `0` para usar el firmware normal.
 
 ## Qué hace
 
@@ -126,9 +154,15 @@ alimentación, o el LED de tu placa es activo en alto → invertí `LED_ON_LEVEL
 [PASS] MAX PART_ID    PART_ID=0x15 REV_ID=0x..., soft reset ok
 [PASS] MAX temp die   2x.xx C
 [PASS] MAX pin INT    reposo alto=si, baja con int=si, flag=si, se libera=si
-RDDPM  = 0x08 tras reset (esperado 0x08), 0x9C tras initR (esperado 0x9C)
-[PASS] LCD readback   RDDPM 0x08 -> 0x9C, el controlador recibio la init por SPI
+RDDID  = 00 00 00 (ST7735S suele dar 7C 89 F0, los clones varian)
+RDDPM  = 0x00 tras reset (esperado 0x08), 0x00 tras initR (esperado 0x9C)
+[N/D ] LCD readback   el modulo no devuelve datos de lectura (0x00/0x00), verificar visualmente
 ```
+
+Con este módulo `LCD readback` da **`N/D`**, y es lo esperado: no devuelve datos
+de lectura, así que el test de la pantalla es visual (el patrón de colores y el
+marco de 1 px). Si otro módulo sí devuelve lecturas, tendría que dar `PASS` con
+`RDDPM 0x08 -> 0x9C`.
 
 | Síntoma | Causa probable |
 |---|---|
@@ -140,7 +174,10 @@ RDDPM  = 0x08 tras reset (esperado 0x08), 0x9C tras initR (esperado 0x9C)
 | `LCD readback` da `N/D` | El módulo no devuelve datos de lectura (algunos no conectan el SDA al pin de salida del controlador). No es un error: **mirar la pantalla**. |
 | `LCD readback` da `FAIL` con `RDDPM` igual antes y después | La lectura anda pero las escrituras no llegan: revisar SCK/SDA/CS/DC. |
 | Pantalla en blanco pero el test pasa | Backlight: probar invertir `BL_ON` en `main.cpp` (si el módulo tiene transistor inversor). |
+| Backlight prende pero la pantalla no dibuja nada (y `LCD readback` da `N/D`) | El backlight lo maneja GPIO5 por separado: **no** prueba el SPI. Mirar en el Serial las líneas `[TFT]` del *pin check* (cortes/puentes entre CS, DC, RST, SCK, SDA) y correr `TFT_PIN_TEST 2` midiendo con multímetro (en esta placa el culpable fue un corto entre SCK y SDA). Si el cableado está bien, probar `TFT_USE_SOFT_SPI=1`: si con SPI por software dibuja y con hardware no, es el clock del SPI (el init sale a 32 MHz y el ST7735S especifica ~15 MHz); si no dibuja en ninguno, es cableado/soldadura abierta de alguna de esas 5 líneas, o el pinout del módulo. Medir con multímetro que RST y CS estén en ~3.3 V en reposo. |
+| `[E] spiAttachMISO(): SPI Does not have default pins on ESP32C3!` | Inofensivo: el módulo no tiene MISO (se pasa `-1`) y el core lo avisa. No afecta la escritura a la pantalla. |
 | Los colores del patrón no coinciden con el nombre (rojo se ve azul) | Cambiar `TFT_INIT_TAB` a `INITR_BLACKTAB` en `main.cpp`. |
+| Franja de ruido en un borde (p. ej. abajo) y el marco de 1 px cortado en el borde opuesto | Offset del origen de la imagen: ajustar `TFT_Y_ADJUST` / `TFT_X_ADJUST` en `main.cpp` (ruido abajo → subir `TFT_Y_ADJUST`; si empeora, usar negativo). Para este módulo quedó en X = -2, Y = +29; el offset es del módulo, no del firmware ([TFT.md §3](TFT.md)). |
 | El marco de 1 px se corta en algún borde o la imagen está corrida | Offsets de columna/fila del módulo: probar otra constante de `TFT_INIT_TAB` (`INITR_144GREENTAB`, `INITR_BLACKTAB`, `INITR_GREENTAB`). |
 
 ### Notas
@@ -153,8 +190,9 @@ RDDPM  = 0x08 tras reset (esperado 0x08), 0x9C tras initR (esperado 0x9C)
 - La librería de Adafruit manda los comandos de init con el clock por defecto
   de ella (32 MHz pedidos, el ESP32-C3 baja a lo que pueda); después del
   `initR` el test lo baja a 10 MHz (`TFT_SPI_HZ`), que es más seguro para el
-  dibujado. Si la init falla de forma intermitente, sospechá del cableado antes
-  que del software.
+  dibujado. En esta placa, con las soldaduras bien, **funciona así** (SPI por
+  hardware, más rápido que el de software). Si la init falla de forma
+  intermitente, sospechá del cableado antes que del software.
 - **GPIO21 (CS_TFT) y GPIO20 (RST_TFT)** son los pines UART0 del ESP32-C3
   (`U0TXD` / `U0RXD`). Con `USB_CDC_ON_BOOT` no se usan para el Serial, pero el
   bootloader ROM puede escribir logs por GPIO21 al arrancar, lo que mueve el

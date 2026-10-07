@@ -42,13 +42,36 @@
 
 // Set to 1 once the TFT is wired up. Can also be overridden with -DENABLE_TFT=1.
 #ifndef ENABLE_TFT
-#define ENABLE_TFT 0
+#define ENABLE_TFT 1
 #endif
+
+// Only with ENABLE_TFT 1. Set to 1 to drive the TFT with bit-banged SPI instead
+// of the SPI peripheral. Slow (live plot refreshes ~2 Hz) but the init commands
+// then go out at a few hundred kHz instead of Adafruit's 32 MHz default, which is
+// above the ST7735S limit (~15 MHz). If the screen works with 1 and stays blank
+// with 0, the problem is the SPI clock / routing; if it is blank with both, it is
+// the wiring, the pinout of the module, or the module itself.
+#ifndef TFT_USE_SOFT_SPI
+#define TFT_USE_SOFT_SPI 0
+#endif
+
+// Soldering check for the TFT header, probed with a multimeter. Nothing else runs in
+// these modes. Set back to 0 afterwards.
+//   1 = every TFT line (CS, RST, A0/DC, SDA, SCK, LED) at logic 1, held: finds open joints.
+//   2 = one line at a time at logic 1 for TFT_PIN_STEP_MS, the others held at 0:
+//       finds bridges between neighbouring pins.
+#ifndef TFT_PIN_TEST
+#define TFT_PIN_TEST 0
+#endif
+#define TFT_PIN_STEP_MS 5000
 
 #include <Arduino.h>
 #include <Wire.h>
 #include <esp_system.h>
 #include <stdarg.h>
+#if TFT_PIN_TEST
+#include <driver/gpio.h>
+#endif
 #if ENABLE_TFT
 #include <SPI.h>
 #include <Adafruit_GFX.h>
@@ -79,6 +102,19 @@
 #define TFT_H 128
 #define TFT_INIT_TAB INITR_144GREENTAB  // 1.44" 128x128; try INITR_BLACKTAB if colors/offsets look off
 #define TFT_SPI_HZ 10000000
+
+// Nudge where the image starts inside the controller's RAM, in pixels, when the
+// library's offsets don't fit the panel. Symptom: a strip of noise on one edge and
+// the 1 px white frame cut off on the opposite edge. Noise at the BOTTOM (top line
+// of the frame missing) -> raise TFT_Y_ADJUST by the number of noise rows (moves the
+// image down). Noise at the RIGHT -> raise TFT_X_ADJUST. Noise at the top/left, or if
+// it gets worse -> use negative values.
+// Calibrated for the module on the PCB V2: the library assumes the visible window
+// starts at RAM (col 2, row 3) for INITR_144GREENTAB; this module starts at (0, 32).
+// It is a property of the module, not of the firmware: recalibrate if it is replaced.
+// See TFT.md for how to reuse the display in another firmware.
+#define TFT_X_ADJUST -2
+#define TFT_Y_ADJUST 29
 #define COLOR_GRAY 0x7BEF
 
 // ST7735 commands used for the readback test
@@ -149,7 +185,22 @@ static float dieTempC = 0;
 static uint8_t tftRddpmBefore = 0, tftRddpmAfter = 0;
 static uint8_t tftId[3] = {0, 0, 0};
 
-static Adafruit_ST7735 tft(&SPI, PIN_CS_TFT, PIN_DC_TFT, PIN_RST_TFT);
+// Adafruit_ST7735 plus a way to move the image origin (the offsets are protected).
+class TftPanel : public Adafruit_ST7735 {
+ public:
+  using Adafruit_ST7735::Adafruit_ST7735;
+  // Call AFTER setRotation(), which recomputes the origin from the library's offsets.
+  void nudgeOrigin(int8_t dx, int8_t dy) {
+    _xstart += dx;
+    _ystart += dy;
+  }
+};
+
+#if TFT_USE_SOFT_SPI
+static TftPanel tft(PIN_CS_TFT, PIN_DC_TFT, PIN_SDA_TFT, PIN_SCK_TFT, PIN_RST_TFT);
+#else
+static TftPanel tft(&SPI, PIN_CS_TFT, PIN_DC_TFT, PIN_RST_TFT);
+#endif
 static GFXcanvas16 plot(TFT_W, PLOT_H);
 #endif
 
@@ -524,20 +575,94 @@ static void tftHardwareReset() {
 
 static bool looksReadable(uint8_t v) { return v != 0x00 && v != 0xFF; }
 
+// Drives each TFT line high in turn (all the others low) and reads every line
+// back. A line that reads low while driven high is shorted to GND; one that reads
+// high while driven low is shorted to 3V3; a second line that goes high together
+// with the driven one is bridged to it (typical solder bridge between adjacent
+// header pins). It CANNOT detect an open joint: a pin that isn't connected just
+// follows our own driver. Blinks the backlight, that is expected.
+static void tftPinCheck() {
+  struct Line {
+    uint8_t pin;
+    const char *name;
+  };
+  const Line lines[] = {{PIN_CS_TFT, "CS"},   {PIN_DC_TFT, "DC"},   {PIN_RST_TFT, "RST"},
+                        {PIN_SCK_TFT, "SCK"}, {PIN_SDA_TFT, "SDA"}, {PIN_BL_TFT, "BL"}};
+  const uint8_t n = sizeof(lines) / sizeof(lines[0]);
+  bool ok = true;
+
+  for (uint8_t i = 0; i < n; i++) {
+    pinMode(lines[i].pin, OUTPUT);
+    digitalWrite(lines[i].pin, LOW);
+  }
+  delay(2);
+  for (uint8_t i = 0; i < n; i++) {
+    if (digitalRead(lines[i].pin)) {
+      ok = false;
+      DBG("TFT", "%s (GPIO%d) lee ALTO con todas las lineas en bajo -> corto a 3V3 o a otra senal",
+          lines[i].name, lines[i].pin);
+    }
+  }
+  for (uint8_t i = 0; i < n; i++) {
+    digitalWrite(lines[i].pin, HIGH);
+    delayMicroseconds(200);
+    for (uint8_t j = 0; j < n; j++) {
+      bool level = digitalRead(lines[j].pin);
+      if (j == i && !level) {
+        ok = false;
+        DBG("TFT", "%s (GPIO%d) lee BAJO aunque se maneja en alto -> corto a GND", lines[i].name,
+            lines[i].pin);
+      } else if (j != i && level) {
+        ok = false;
+        DBG("TFT", "%s (GPIO%d) sube cuando se maneja %s (GPIO%d) -> puente entre ambas",
+            lines[j].name, lines[j].pin, lines[i].name, lines[i].pin);
+      }
+    }
+    digitalWrite(lines[i].pin, LOW);
+  }
+
+  // Leave every line in its idle state.
+  digitalWrite(PIN_CS_TFT, HIGH);
+  digitalWrite(PIN_DC_TFT, HIGH);
+  digitalWrite(PIN_RST_TFT, HIGH);
+  digitalWrite(PIN_BL_TFT, BL_ON);
+  if (ok) {
+    DBG("TFT", "pin check: sin cortos ni puentes entre CS/DC/RST/SCK/SDA/BL "
+               "(no detecta soldaduras abiertas)");
+  }
+}
+
 static void testLcd() {
+  tftPinCheck();
   tftHardwareReset();
   tftReadReg(TFT_CMD_RDDPM, &tftRddpmBefore, 1);
   tftReadReg(TFT_CMD_RDDID, tftId, 3);
 
+  DBG("TFT", "initR(): SPI por %s, SCK=GPIO%d SDA=GPIO%d CS=GPIO%d DC=GPIO%d RST=GPIO%d",
+      TFT_USE_SOFT_SPI ? "SOFTWARE" : "hardware", PIN_SCK_TFT, PIN_SDA_TFT, PIN_CS_TFT, PIN_DC_TFT,
+      PIN_RST_TFT);
+#if !TFT_USE_SOFT_SPI
   SPI.begin(PIN_SCK_TFT, -1, PIN_SDA_TFT, -1); // no MISO, no hardware CS
+  // (the core logs "SPI Does not have default pins on ESP32C3" for MISO=-1: harmless)
+#endif
   tft.initR(TFT_INIT_TAB);
+#if !TFT_USE_SOFT_SPI
   tft.setSPISpeed(TFT_SPI_HZ);
+#endif
   tft.setRotation(0);
+  tft.nudgeOrigin(TFT_X_ADJUST, TFT_Y_ADJUST);
+  DBG("TFT", "origen de imagen ajustado: X%+d Y%+d", TFT_X_ADJUST, TFT_Y_ADJUST);
+  DBG("TFT", "initR() terminado (los comandos de init salen a %s)",
+      TFT_USE_SOFT_SPI ? "baja velocidad" : "32 MHz, el default de Adafruit; el dibujo baja a 10 MHz");
 
   // Release the bus to read back what initR() wrote, then take it again.
+#if !TFT_USE_SOFT_SPI
   SPI.end();
+#endif
   tftReadReg(TFT_CMD_RDDPM, &tftRddpmAfter, 1);
+#if !TFT_USE_SOFT_SPI
   SPI.begin(PIN_SCK_TFT, -1, PIN_SDA_TFT, -1);
+#endif
 
   Serial.printf("RDDID  = %02X %02X %02X (ST7735S suele dar 7C 89 F0, los clones varian)\n",
                 tftId[0], tftId[1], tftId[2]);
@@ -813,6 +938,83 @@ static void ledHeartbeat() {
   ledSet(on);
 }
 
+#if TFT_PIN_TEST
+// TFT header soldering tests. No I2C, SPI or TFT code runs in these modes, so nothing
+// else moves the pins. J2 pin numbers are from the schematic (V2): 1 VCC, 2 GND, then
+// the lines below, in physical order (neighbours in the table are neighbours on J2).
+struct TftLine {
+  uint8_t pin;
+  uint8_t j2;
+  const char *name;
+};
+static const TftLine TFT_LINES[] = {{PIN_CS_TFT, 3, "CS"},   {PIN_RST_TFT, 4, "RST"},
+                                    {PIN_DC_TFT, 5, "A0/DC"}, {PIN_SDA_TFT, 6, "SDA"},
+                                    {PIN_SCK_TFT, 7, "SCK"},  {PIN_BL_TFT, 8, "LED"}};
+#define TFT_LINE_COUNT ((uint8_t)(sizeof(TFT_LINES) / sizeof(TFT_LINES[0])))
+
+// Mode 1: every line goes to a logic 1 (3.3 V) and stays there.
+static void tftPinHighTest() {
+  for (uint8_t i = 0; i < TFT_LINE_COUNT; i++) {
+    pinMode(TFT_LINES[i].pin, OUTPUT);
+    digitalWrite(TFT_LINES[i].pin, HIGH);
+  }
+  delay(5);
+
+  Serial.println();
+  Serial.println("---- TFT_PIN_TEST 1: todas las lineas del TFT en 1 logico (3.3 V) ----");
+  Serial.println("Medir con el multimetro contra GND, en cada pin del MODULO (no en la PCB):");
+  Serial.println("  J2 pin 1  VCC     (+3V3, no sale de un GPIO)  -> 3.3 V");
+  Serial.println("  J2 pin 2  GND");
+  for (uint8_t i = 0; i < TFT_LINE_COUNT; i++) {
+    bool level = digitalRead(TFT_LINES[i].pin);
+    Serial.printf("  J2 pin %u  %-6s GPIO%-2u -> debe dar 3.3 V | el ESP32 la lee %s\n",
+                  TFT_LINES[i].j2, TFT_LINES[i].name, TFT_LINES[i].pin,
+                  level ? "ALTA (ok)" : "BAJA -> corto a GND en la PCB");
+  }
+  Serial.println("Un pin que en el modulo NO da 3.3 V = soldadura abierta o pista cortada.");
+}
+
+// Mode 2: line `active` goes high, every other line is driven low. All pins use the
+// weakest drive strength: if two lines ARE bridged, the two drivers fight through the
+// bridge with only a few mA, and both bridged pins read something in between (~1.5-2 V)
+// instead of a clean 0 / 3.3 V.
+static void tftPinStep(uint8_t active) {
+  for (uint8_t i = 0; i < TFT_LINE_COUNT; i++) {
+    pinMode(TFT_LINES[i].pin, OUTPUT);
+    gpio_set_drive_capability((gpio_num_t)TFT_LINES[i].pin, GPIO_DRIVE_CAP_0);
+    digitalWrite(TFT_LINES[i].pin, i == active ? HIGH : LOW);
+  }
+  delay(5);
+
+  const TftLine &a = TFT_LINES[active];
+  Serial.println();
+  DBG("TFT", "paso %u/%u: J2 pin %u %s (GPIO%u) en ALTO (3.3 V), las demas en BAJO (0 V)",
+      active + 1, TFT_LINE_COUNT, a.j2, a.name, a.pin);
+  char neighbours[24]; // J2 has pins 1..8, so the last line has only one neighbour
+  if (a.j2 < 8) {
+    snprintf(neighbours, sizeof(neighbours), "pin %u y pin %u", a.j2 - 1, a.j2 + 1);
+  } else {
+    snprintf(neighbours, sizeof(neighbours), "pin %u", a.j2 - 1);
+  }
+  Serial.printf("  medir en el modulo: solo el pin %u debe dar 3.3 V; el resto 0 V (vecinos: %s)\n",
+                a.j2, neighbours);
+
+  bool ok = true;
+  for (uint8_t j = 0; j < TFT_LINE_COUNT; j++) {
+    bool level = digitalRead(TFT_LINES[j].pin);
+    if (j == active && !level) {
+      ok = false;
+      DBG("TFT", "  %s (GPIO%u) lee BAJA aunque se maneja en alto -> corto a GND", a.name, a.pin);
+    } else if (j != active && level) {
+      ok = false;
+      DBG("TFT", "  %s (J2 pin %u, GPIO%u) lee ALTA estando en bajo -> puente con %s o corto a 3V3",
+          TFT_LINES[j].name, TFT_LINES[j].j2, TFT_LINES[j].pin, a.name);
+    }
+  }
+  if (ok) DBG("TFT", "  el ESP32 no detecta puentes en este paso (confirmar con el multimetro)");
+}
+#endif
+
 // ---- Arduino entry points -----------------------------------------------------
 void setup() {
   // 3 quick blinks first: proves the firmware started even if Serial never shows up.
@@ -839,6 +1041,20 @@ void setup() {
       monitorAttached ? "conectado" : "NO detectado (si lo abris ahora, apreta RESET)",
       (unsigned long)waited);
   printBootInfo();
+
+#if TFT_PIN_TEST
+#if TFT_PIN_TEST == 1
+  tftPinHighTest();
+#else
+  Serial.println();
+  Serial.println("---- TFT_PIN_TEST 2: una linea en alto por vez, cada 5 s ----");
+  Serial.println("Medir con el multimetro contra GND (J2 pin 2), en los pines del MODULO.");
+  Serial.println("Si ademas del pin en alto otro pin da tension (~1.5 a 3.3 V) hay un puente.");
+#endif
+  DBG("BOOT", "setup() terminado (modo TFT_PIN_TEST %d: no se corre ningun otro test)",
+      TFT_PIN_TEST);
+  return;
+#endif
 
 #if ENABLE_TFT
   pinMode(PIN_BL_TFT, OUTPUT);
@@ -875,6 +1091,30 @@ void setup() {
 }
 
 void loop() {
+#if TFT_PIN_TEST
+  // Keep everything else idle so nothing disturbs the TFT lines being probed.
+  ledHeartbeat();
+#if TFT_PIN_TEST == 1
+  static uint32_t lastReminder = 0;
+  if (millis() - lastReminder >= 10000) {
+    lastReminder = millis();
+    DBG("TFT", "TFT_PIN_TEST 1 activo: CS RST A0 SDA SCK LED en 1 logico. Poner TFT_PIN_TEST en 0 "
+               "para volver al firmware normal");
+  }
+#else
+  static uint8_t step = 0;
+  static uint32_t lastStep = 0;
+  static bool started = false;
+  if (!started || millis() - lastStep >= TFT_PIN_STEP_MS) {
+    started = true;
+    lastStep = millis();
+    if (step == 0) Serial.println("\n==== vuelta nueva (CS, RST, A0/DC, SDA, SCK, LED) ====");
+    tftPinStep(step);
+    step = (step + 1) % TFT_LINE_COUNT;
+  }
+#endif
+  return;
+#endif
   static bool firstLoop = true;
   if (firstLoop) {
     firstLoop = false;
