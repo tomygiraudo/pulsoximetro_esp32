@@ -6,7 +6,7 @@
     "devices": {
       "$deviceId": {
         ".read": true,
-        ".write": "auth != null && auth.uid === 'REEMPLAZAR_UID_DEL_DISPOSITIVO'",
+        ".write": "auth != null && auth.uid === 'QD54DmBqfUWiSBoE5PyzMN4Fj4D3'",
 
         "info": {
           ".validate": "newData.hasChildren(['device_id', 'updated'])",

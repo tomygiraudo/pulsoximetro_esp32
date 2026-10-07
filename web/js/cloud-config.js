@@ -14,6 +14,6 @@
 // (tools/cloud/database.rules.json). Nunca pongas acá una API key de servicio ni
 // contraseñas.
 window.PULSOX_CLOUD = {
-  databaseURL: "",
+  databaseURL: "https://pulsoximetro-esp-default-rtdb.firebaseio.com",
   deviceId: "pulsox-4ba0e4ea46d7",
 };
