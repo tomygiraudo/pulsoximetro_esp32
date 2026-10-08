@@ -22,3 +22,10 @@ CMakeUserPresets.json
 .claude/
 .claude/memory/
 CLAUDE.local.md
+
+# Credenciales del dispositivo en la nube (Firebase): ver tools/cloud/.env.example
+tools/cloud/.env
+
+# Python
+__pycache__/
+*.pyc

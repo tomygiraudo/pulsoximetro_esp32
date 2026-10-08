@@ -9,7 +9,9 @@
 // sample gets a time from the sample rate (t0 + k/fs) instead of its arrival
 // time, and the trace is drawn RENDER_DELAY_MS behind "now" so batches fill
 // in smoothly. The sample clock is nudged toward the arrival clock to follow
-// slow drift between the ESP32 oscillator and the phone.
+// slow drift between the ESP32 oscillator and the phone. Over the cloud
+// transport a batch is a whole second of signal, so the delay has to cover it
+// (PPG_RENDER_DELAY_CLOUD_MS, see setRenderDelay()).
 //
 // Colors are literal strings (canvas does not resolve CSS var()); the caller
 // passes them via getColors() and calls redraw() after a theme change.
@@ -17,6 +19,7 @@
 
 const PPG_WINDOW_SECONDS = 6;
 const PPG_RENDER_DELAY_MS = 300;
+const PPG_RENDER_DELAY_CLOUD_MS = 1500; // 1 s batches + network jitter
 const PPG_MAX_RESYNC_MS = 500;
 const PPG_PAD_RIGHT = 7; // keeps the live-head dot inside the canvas
 
@@ -33,6 +36,7 @@ class PpgTrace {
     this._samples = []; // { t: performance.now() ms, v: number }
     this._nextT = null; // sample-clock time of the next sample to arrive
     this._fs = 50;
+    this._renderDelay = PPG_RENDER_DELAY_MS;
     this._lo = -1; // smoothed vertical range
     this._hi = 1;
     this._raf = null;
@@ -62,10 +66,15 @@ class PpgTrace {
     // Slow drift correction (the last sample should arrive ~ at "now").
     this._nextT += (now - (this._nextT - dt)) * 0.03;
 
-    const horizon = now - PPG_RENDER_DELAY_MS - (PPG_WINDOW_SECONDS + 1) * 1000;
+    const horizon = now - this._renderDelay - (PPG_WINDOW_SECONDS + 1) * 1000;
     let drop = 0;
     while (drop < this._samples.length && this._samples[drop].t < horizon) drop++;
     if (drop) this._samples.splice(0, drop);
+  }
+
+  /** How far behind "now" the trace is drawn. Longer batches need a longer delay. */
+  setRenderDelay(ms) {
+    this._renderDelay = ms;
   }
 
   clear() {
@@ -121,7 +130,7 @@ class PpgTrace {
     const plotBottom = H - 18; // leave room for the time labels
     const plotH = plotBottom - plotTop;
     const windowMs = PPG_WINDOW_SECONDS * 1000;
-    const renderT = performance.now() - PPG_RENDER_DELAY_MS;
+    const renderT = performance.now() - this._renderDelay;
 
     ctx.clearRect(0, 0, W, H);
     ctx.font = '600 11px Figtree, system-ui, sans-serif';

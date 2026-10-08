@@ -2,7 +2,7 @@
   "name": "PulsOx — Monitor de oximetría",
   "short_name": "PulsOx",
   "description": "Dashboard en tiempo real de SpO2, frecuencia cardíaca y señal PPG para el pulsioxímetro casero ESP32-C3 + MAX30102.",
-  "id": "/pulsox-esp32/",
+  "id": "./",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
