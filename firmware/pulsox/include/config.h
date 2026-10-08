@@ -14,6 +14,17 @@
 #define LED_PERIOD_IDLE_MS 125   // toggle period while the sensor is missing (fast blink)
 #define LED_PERIOD_LIVE_MS 500   // toggle period while streaming (slow blink)
 
+// ---- TFT orientation (lib/tft_st7735) -----------------------------------------
+// The panel is mounted upside down, so the controller scans it rotated 180 degrees
+// (rotation 2) and every screen is drawn as designed. The image origin in the
+// controller RAM depends on the rotation: this module shows its window at column 0,
+// row 32 in rotation 0 (offset -2, +29 from the library's 2, 3); in rotation 2 the
+// library assumes column 2, row 1, so the same window needs -2, -1. If a noise strip
+// shows up on one edge, nudge these (see lib/tft_st7735/tft_st7735.h, section 2.8).
+#define TFT_ROTATION 2
+#define TFT_X_ADJUST -2
+#define TFT_Y_ADJUST -1
+
 // ---- Runtime ------------------------------------------------------------------
 #define SERIAL_WAIT_MS 4000          // max wait for the monitor at boot (USB-CDC)
 #define SENSOR_RETRY_MS 2000         // how often to retry while the sensor is missing
