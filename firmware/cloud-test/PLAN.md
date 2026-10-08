@@ -1,7 +1,10 @@
 # Plan: sketch de prueba `cloud-test` (ESP32-C3 → Firebase RTDB)
 
-> **Estado: planificado y aprobado el 2026-10-08. Todavía NO se implementó nada.**
-> Este archivo es el plan completo, escrito para retomarlo desde otra sesión de Claude Code (por ejemplo, desde la tablet) sin el contexto de la conversación original. Para ejecutarlo: abrí el repo en la rama `firmware-pulsox` y pedí "ejecutá `firmware/cloud-test/PLAN.md`". Cuando esté implementado, este archivo se puede borrar (queda el `README.md` del sketch).
+> **Estado (2026-10-08): implementado y compilando; falta probarlo en la placa.**
+> El paso 0 (merge de `main`) y todo el código de `firmware/cloud-test/` están hechos. `pio run` compila sin warnings (RAM 12,6 %, flash 69,8 %), también con `NTP_SYNC`, `CRASH_TEST`, `FAKE_BATTERY_PCT=-1`, `SCENARIO_MIXED` y `FS_HZ=100`. En el host se comprobó que `fake_vitals` reproduce las estadísticas de `fake_device.py`, que el parser JSON lee respuestas reales de Firebase y que el `live` generado cumple `database.rules.json`.
+> **Pendiente**: las pruebas 2 a 8 de "Verificación" (necesitan la placa y el `secrets.h` real; el checklist está también en el `README.md` del sketch), y confirmar con el primer handshake que cada host de Google usa la raíz indicada en "TLS con dos raíces" (esa verificación con `openssl` no se pudo repetir desde la sesión de Claude Code en la web, cuyo proxy intercepta TLS). Cuando estén hechas, este archivo se puede borrar (queda el `README.md` del sketch).
+>
+> Este archivo es el plan completo, escrito para retomarlo desde otra sesión de Claude Code sin el contexto de la conversación original.
 
 ## Contexto
 
