@@ -5,7 +5,7 @@
 // WebSocket, or — for the cloud source — cross-origin requests to Firebase,
 // which the origin check below leaves alone).
 
-const CACHE_NAME = "pulsox-shell-v4";
+const CACHE_NAME = "pulsox-shell-v5";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
@@ -28,7 +28,11 @@ const SHELL_ASSETS = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_ASSETS)).then(() => self.skipWaiting())
+    // "reload" skips the HTTP cache (GitHub Pages serves max-age=600) so the shell is one coherent release
+    caches
+      .open(CACHE_NAME)
+      .then((cache) => cache.addAll(SHELL_ASSETS.map((asset) => new Request(asset, { cache: "reload" }))))
+      .then(() => self.skipWaiting())
   );
 });
 
@@ -45,32 +49,18 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
 
-  // The cloud settings (databaseURL) change without a code release: take them
-  // from the network when possible so an installed copy does not keep the old ones.
-  if (url.pathname.endsWith("/js/cloud-config.js")) {
-    event.respondWith(
-      fetch(event.request)
-        .then((response) => {
+  // Network first, cache only as the offline fallback: a new release (GitHub Pages)
+  // must show up on the next load without bumping CACHE_NAME, and the cloud settings
+  // (cloud-config.js) change without a code release.
+  event.respondWith(
+    fetch(event.request)
+      .then((response) => {
+        if (response.ok) {
           const copy = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-          return response;
-        })
-        .catch(() => caches.match(event.request))
-    );
-    return;
-  }
-
-  event.respondWith(
-    caches.match(event.request).then(
-      (cached) =>
-        cached ||
-        fetch(event.request)
-          .then((response) => {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-            return response;
-          })
-          .catch(() => cached)
-    )
+        }
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });

@@ -30,10 +30,13 @@ const ROUTES = ["history", "dashboard", "settings"];
 const ROUTE_TITLES = { history: "Historial", dashboard: "Dashboard", settings: "Ajustes" };
 const THEMES = ["light", "dark", "auto"];
 const SOURCES = ["cloud", "local", "demo"];
+// ws:// from a page served over https (GitHub Pages) is blocked as mixed content, so
+// "Red local" is only offered when the app is opened over plain http.
+const LOCAL_AVAILABLE = location.protocol !== "https:";
 const SOURCE_HINTS = {
   cloud: "Muestra la medición en vivo y el historial compartido desde cualquier red: el ESP32 sube los datos a la nube (Firebase).",
   local:
-    "La app y el ESP32 deben estar en la misma red WiFi. Si la app se abre por https (GitHub Pages) el navegador bloquea ws://: usá la Nube o abrila por http.",
+    "La app y el ESP32 deben estar en la misma red WiFi. Solo está disponible si la app se abre por http: desde https (GitHub Pages) el navegador bloquea ws://.",
   demo: "Simula mediciones para probar la app sin hardware.",
 };
 
@@ -853,13 +856,14 @@ el.connectBtn.addEventListener("click", () => {
  * (wsUrl / demoMode), preferring the cloud when it is configured. */
 function loadSource() {
   const saved = localStorage.getItem(STORAGE_KEYS.source);
-  if (SOURCES.includes(saved) && (saved !== "cloud" || cloudConfig)) return saved;
+  if (SOURCES.includes(saved) && (saved !== "cloud" || cloudConfig) && (saved !== "local" || LOCAL_AVAILABLE)) return saved;
   const url = localStorage.getItem(STORAGE_KEYS.wsUrl);
   const demo = localStorage.getItem(STORAGE_KEYS.demoMode);
   if (demo === "true") return "demo";
-  if (url) return "local";
+  if (url && LOCAL_AVAILABLE) return "local";
   if (cloudConfig) return "cloud";
-  return demo === null ? "demo" : "local"; // "local" without an address = disconnected
+  // "local" without an address = disconnected
+  return demo === null || !LOCAL_AVAILABLE ? "demo" : "local";
 }
 
 /** Switches the data source: stops the current one (closing any open
@@ -903,6 +907,7 @@ function renderSourceUi() {
 }
 
 el.sourceSegmented.querySelector('[data-source="cloud"]').hidden = !cloudConfig;
+el.sourceSegmented.querySelector('[data-source="local"]').hidden = !LOCAL_AVAILABLE;
 el.sourceSegmented.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-source]");
   if (!btn || btn.dataset.source === state.source) return;
