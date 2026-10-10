@@ -10,6 +10,9 @@
 // Measurement lifecycle (see PROTOCOL.md): the dashboard idles until the
 // device sends its start packet (measurement button pressed); from then on
 // `telemetry` + `ppg` frames feed the readings, the PPG trace and the history.
+// When a measurement ends with a reading, the dashboard keeps showing its final
+// SpO2 / BPM and the last PPG window for RESULT_HOLD_MS (state.result) before
+// going back to "—"; starting another measurement replaces it right away.
 //
 // Data source (Ajustes > Conexion), persisted in `pulsox.source`:
 //   cloud  Firebase Realtime Database written by the ESP32 (cloud.js); shared
@@ -77,6 +80,7 @@ const RING_ARC = 0.75 * RING_CIRCUMFERENCE; // 270° open gauge
 const LOW_BATTERY_PCT = 20;
 const DEFAULT_PPG_FS = 50;
 const HOLD_LAST_VALID_MS = 5000;
+const RESULT_HOLD_MS = 2 * 60 * 1000; // how long a finished measurement's result stays on the dashboard
 
 const cloudConfig = resolveCloudConfig(window.PULSOX_CLOUD); // null -> the "Nube" source is not offered
 
@@ -89,6 +93,7 @@ const state = {
   hello: null,
   battery: null, // last battery_pct seen (null = unknown)
   session: null, // { id, startedAt, implicit } while a measurement is open
+  result: null, // { spo2, bpm, startedAt, endedAt, expiresAt } of the measurement that just ended
   telemetrySeen: false, // first telemetry of the open measurement received
   finger: false,
   spo2: null,
@@ -379,7 +384,8 @@ function handleFrame(msg) {
       );
       break;
     case "measurement_end":
-      endSession();
+      // the cloud source also closes a measurement when the device goes quiet ("timeout"): no result then
+      endSession({ timedOut: msg.reason === "timeout" });
       break;
     case "telemetry":
       handleTelemetry(msg);
@@ -395,9 +401,12 @@ function handleFrame(msg) {
 
 function handleConnectionState(newState) {
   state.conn = newState;
-  if (newState !== "live" && newState !== "demo" && state.session) {
-    endSession({ silent: true });
-    showToast("Conexión perdida: se cerró la medición");
+  if (newState !== "live" && newState !== "demo") {
+    clearResult(); // a result from before the drop would be stale
+    if (state.session) {
+      endSession({ silent: true });
+      showToast("Conexión perdida: se cerró la medición");
+    }
   }
   renderConnection();
   renderDashboard();
@@ -418,6 +427,13 @@ function resetLiveValues() {
   state.quality = 0;
 }
 
+/** Drops the held result of the last measurement (and its frozen PPG window). */
+function clearResult() {
+  if (!state.result) return;
+  state.result = null;
+  ppg.clear();
+}
+
 /** Opens a measurement (the device's start packet, or — if telemetry shows up
  * without one, e.g. after a reconnect while the device is still measuring —
  * an implicit one). `id` / `startedAt` (ms epoch) override the defaults. */
@@ -427,6 +443,7 @@ function beginSession({ implicit = false, id = null, startedAt = null } = {}) {
   if (typeof startedAt !== "number" || !Number.isFinite(startedAt)) startedAt = now;
   startedAt = clamp(startedAt, now - 24 * 3600 * 1000, now);
   state.session = { id: id || `m-${startedAt}`, startedAt, implicit };
+  state.result = null; // the previous result gives way to the new measurement
   resetLiveValues();
   ppg.clear();
   history.startSession({ id: state.session.id, startedAt, implicit });
@@ -434,12 +451,23 @@ function beginSession({ implicit = false, id = null, startedAt = null } = {}) {
   if (!implicit) showToast("Medición iniciada");
 }
 
-function endSession({ silent = false } = {}) {
+/** Closes the open measurement. If it ended normally with the finger on and a
+ * reading, its final values and PPG window stay on the dashboard (state.result)
+ * for RESULT_HOLD_MS. A silent close (connection lost) or a `timedOut` one
+ * (the device went quiet) has no result, and neither has a measurement the
+ * device discarded: those lose the finger first (PROTOCOL.md). */
+function endSession({ silent = false, timedOut = false } = {}) {
   if (!state.session) return;
-  history.endSession(Date.now());
+  const now = Date.now();
+  const hasResult = !silent && !timedOut && state.finger && (state.spo2 !== null || state.bpm !== null);
+  state.result = hasResult
+    ? { spo2: state.spo2, bpm: state.bpm, startedAt: state.session.startedAt, endedAt: now, expiresAt: now + RESULT_HOLD_MS }
+    : null;
+  history.endSession(now);
   state.session = null;
   resetLiveValues();
-  ppg.clear();
+  if (hasResult) ppg.freeze();
+  else ppg.clear();
   // break the trend lines at the end of a measurement
   spo2Chart.push(Date.now(), null);
   bpmChart.push(Date.now(), null);
@@ -510,9 +538,61 @@ function handlePpg(msg) {
 
 // ---------------------------------------------------------- dashboard UI
 
+function criticalAdvice(spo2Status, bpmStatus, bpm) {
+  const t = state.thresholds;
+  const reasons = [];
+  if (spo2Status === "critical") reasons.push(`SpO₂ por debajo de ${t.spo2Warning} %.`);
+  if (bpmStatus === "critical") {
+    reasons.push(bpm < t.bpmLowWarning ? "Frecuencia cardíaca muy baja." : "Frecuencia cardíaca muy alta.");
+  }
+  return `${reasons.join(" ")} Si te sentís mal, buscá atención médica.`;
+}
+
+/** The finished measurement's final values (state.result), classified with the
+ * current thresholds so editing them in Ajustes also updates the held result. */
+function resultModel() {
+  const r = state.result;
+  const t = state.thresholds;
+  const spo2Known = r.spo2 !== null;
+  const bpmKnown = r.bpm !== null;
+  const spo2Status = spo2Known ? classifySpo2(r.spo2, t) : "unknown";
+  const bpmStatus = bpmKnown ? classifyBpm(r.bpm, t) : "unknown";
+  const overall = worseOf(spo2Status, bpmStatus);
+  const duration = formatElapsed(r.endedAt - r.startedAt);
+  const sub =
+    overall === "critical"
+      ? criticalAdvice(spo2Status, bpmStatus, r.bpm)
+      : overall === "warning"
+      ? `Resultado final · ${duration} · revisá las lecturas resaltadas`
+      : `Resultado final · ${duration} · todo en rango`;
+
+  return {
+    title: "Medición finalizada",
+    sub,
+    summaryStatus: overall,
+    summaryIcon: STATUS_ICON[overall],
+    spo2: {
+      ringValue: spo2Known ? r.spo2 : null,
+      value: spo2Known ? String(Math.round(r.spo2)) : "—",
+      status: spo2Status,
+      label: spo2Known ? STATUS_LABEL[spo2Status] : "Sin lectura",
+      caption: spo2Known ? `Normal desde ${t.spo2Good} %` : "Sin lectura",
+    },
+    bpm: {
+      value: bpmKnown ? String(Math.round(r.bpm)) : "—",
+      status: bpmStatus,
+      label: bpmKnown ? STATUS_LABEL[bpmStatus] : "Sin lectura",
+    },
+    signal: false,
+    ppgEmpty: ppg.hasSamples ? null : "Sin señal registrada",
+  };
+}
+
 function dashboardModel() {
   const t = state.thresholds;
   const unknownVital = { ringValue: null, value: "—", status: "unknown" };
+
+  if (!state.session && state.result) return resultModel();
 
   if (!state.session) {
     if (state.conn === "live" || state.conn === "demo") {
@@ -593,14 +673,9 @@ function dashboardModel() {
 
   const overall = worseOf(state.spo2Status, state.bpmStatus);
   if (overall === "critical") {
-    const reasons = [];
-    if (state.spo2Status === "critical") reasons.push(`SpO₂ por debajo de ${t.spo2Warning} %.`);
-    if (state.bpmStatus === "critical") {
-      reasons.push(state.bpm < t.bpmLowWarning ? "Frecuencia cardíaca muy baja." : "Frecuencia cardíaca muy alta.");
-    }
     return {
       title: "Valores críticos",
-      sub: `${reasons.join(" ")} Si te sentís mal, buscá atención médica.`,
+      sub: criticalAdvice(state.spo2Status, state.bpmStatus, state.bpm),
       summaryStatus: "critical",
       summaryIcon: "critical",
       spo2,
@@ -743,8 +818,14 @@ el.demoMeasureBtn.addEventListener("click", () => {
   else connection.startDemoMeasurement();
 });
 
-// keep the elapsed-time label fresh between the 1 Hz telemetry frames
+// keep the elapsed-time label fresh between the 1 Hz telemetry frames, and let
+// a finished measurement's result expire (compared against the clock, not a
+// timeout, so a throttled background tab still drops it on its next tick)
 setInterval(() => {
+  if (state.result && Date.now() >= state.result.expiresAt) {
+    clearResult();
+    renderDashboard();
+  }
   if (state.session && state.route === "dashboard") renderDashboard();
 }, 1000);
 
@@ -872,6 +953,7 @@ function loadSource() {
 function setSource(source, { persist = true } = {}) {
   if (persist) localStorage.setItem(STORAGE_KEYS.source, source);
   connection.disconnect();
+  clearResult(); // never carry one source's result over to another
   state.source = source;
   state.hello = null;
   state.battery = null;

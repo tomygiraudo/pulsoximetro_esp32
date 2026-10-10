@@ -183,9 +183,15 @@ definitivo): `fs` en Hz y `samples` como arreglo de números; el simulador usa
 > **Estado: ⏳ PENDIENTE — falta decidir si existe como paquete y su armado.**
 
 Marcaría el fin de la medición (el usuario la detiene o el firmware la corta por
-duración máxima). Al recibirlo la app cierra la medición, deja de mostrar
-lecturas y vuelve a "Listo para medir"; el grupo del historial queda con su
-duración.
+duración máxima). Al recibirlo la app cierra la medición; el grupo del historial
+queda con su duración. Si la medición terminó con el dedo puesto y con alguna
+lectura, el dashboard **conserva 2 minutos el resultado final** (SpO₂, BPM y la
+última ventana de la traza PPG, congelada) y recién entonces vuelve a "Listo para
+medir" con los valores en "—"; una medición nueva lo reemplaza al instante. Si la
+medición no tiene resultado (sin dedo al final, o `reason: "timeout"` del
+transporte en la nube: el dispositivo dejó de escribir), vuelve a "Listo para
+medir" de inmediato. Perder la conexión o cambiar de fuente también descarta el
+resultado.
 
 **Supuesto provisional del cliente y del simulador:** la app solo necesita el
 `type`. El simulador envía `{ "type": "measurement_end", "uptime_ms": 65210 }`.

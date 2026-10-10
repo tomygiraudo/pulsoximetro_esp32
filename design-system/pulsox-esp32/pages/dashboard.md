@@ -42,6 +42,7 @@ Entra en una sola pantalla de 390 × 844 (sin scroll), de arriba abajo:
    | Midiendo, todo normal | "Todo en rango" |
    | Midiendo, algún valor en precaución | "Fuera del rango habitual" |
    | Midiendo, algún valor en peligro | "Valores críticos" + motivo + "Si te sentís mal, buscá atención médica." |
+   | Medición terminada con resultado (2 min) | "Medición finalizada" — "Resultado final · 00:52 · todo en rango" (o "revisá las lecturas resaltadas"; en peligro, motivo + aviso médico). Icono y color según el peor estado; valores y traza PPG congelados. Pasados los 2 min vuelve a "Listo para medir". |
 
    Durante la medición la línea de apoyo lleva el cronómetro ("Midiendo · 00:23").
 3. **Tarjeta SpO₂:** gauge de anillo abierto (270°, escala fija 80–100 %) con el
