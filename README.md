@@ -218,3 +218,7 @@ web app.
 - Cliente de la nube en el ESP32 (WiFi STA + TLS + login + keep-alive, integrado
   con deep sleep y el botón), siguiendo `tools/cloud/fake_device.py`.
 - Conectar la web app al dispositivo real y validar el modo `live` / Nube end-to-end.
+
+
+# GOOGLE COLAB
+https://colab.research.google.com/drive/18P-XyyEuqM189sJWGMnf9TlH9UD-HeR_?usp=sharing 

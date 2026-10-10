@@ -8,10 +8,10 @@
         {
             "name": "PlatformIO",
             "includePath": [
-                "C:/Users/tomyg/Desktop/pulsoximetro_esp32/firmware/battery-test/include",
-                "C:/Users/tomyg/Desktop/pulsoximetro_esp32/firmware/battery-test/src",
+                "C:/Users/tomyg/Desktop/pulsoximetro_esp32/firmware/light-sleep/src",
+                "C:/Users/tomyg/Desktop/pulsoximetro_esp32/firmware/pulsox/lib/max30102",
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/Wire/src",
-                "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src",
+                "C:/Users/tomyg/Desktop/pulsoximetro_esp32/firmware/pulsox/lib/ppg",
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/newlib/platform_include",
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/freertos/include",
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/freertos/include/esp_additions/freertos",
@@ -205,6 +205,7 @@
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/qio_qspi/include",
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/cores/esp32",
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/variants/esp32c3",
+                "C:/Users/tomyg/Desktop/pulsoximetro_esp32/firmware/pulsox/lib/tft_st7735",
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/ArduinoOTA/src",
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/AsyncUDP/src",
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src",
@@ -234,6 +235,7 @@
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/USB/src",
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/Update/src",
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/WebServer/src",
+                "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src",
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/WiFiClientSecure/src",
                 "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/WiFiProv/src",
                 ""
@@ -241,10 +243,10 @@
             "browse": {
                 "limitSymbolsToIncludedHeaders": true,
                 "path": [
-                    "C:/Users/tomyg/Desktop/pulsoximetro_esp32/firmware/battery-test/include",
-                    "C:/Users/tomyg/Desktop/pulsoximetro_esp32/firmware/battery-test/src",
+                    "C:/Users/tomyg/Desktop/pulsoximetro_esp32/firmware/light-sleep/src",
+                    "C:/Users/tomyg/Desktop/pulsoximetro_esp32/firmware/pulsox/lib/max30102",
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/Wire/src",
-                    "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src",
+                    "C:/Users/tomyg/Desktop/pulsoximetro_esp32/firmware/pulsox/lib/ppg",
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/newlib/platform_include",
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/freertos/include",
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/freertos/include/esp_additions/freertos",
@@ -438,6 +440,7 @@
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/qio_qspi/include",
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/cores/esp32",
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/variants/esp32c3",
+                    "C:/Users/tomyg/Desktop/pulsoximetro_esp32/firmware/pulsox/lib/tft_st7735",
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/ArduinoOTA/src",
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/AsyncUDP/src",
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src",
@@ -467,6 +470,7 @@
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/USB/src",
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/Update/src",
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/WebServer/src",
+                    "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src",
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/WiFiClientSecure/src",
                     "C:/Users/tomyg/.platformio/packages/framework-arduinoespressif32/libraries/WiFiProv/src",
                     ""
