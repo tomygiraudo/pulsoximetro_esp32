@@ -15,6 +15,10 @@ Detalles:
 https://colab.research.google.com/drive/18P-XyyEuqM189sJWGMnf9TlH9UD-HeR_?usp=sharing 
 
 <img width="1589" height="990" alt="image" src="https://github.com/user-attachments/assets/2c3757df-b4d7-4383-8362-4da494ee0da2" />
+Links utiles: 
+https://www.analog.com/en/resources/reference-designs/maxrefdes117.html
+https://www.analog.com/en/resources/technical-articles/how-to-design-a-better-pulse-oximeter.html 
+https://www.analog.com/en/resources/technical-articles/guidelines-for-spo2-measurement--maxim-integrated.html
 
 ## Hardware
 El esquemático del pulsioxímetro y todos sus componentes necesarios se detallan en PCB/Esquematico_V2.pdf/. Los archivos de diseño de la PCB se encuentran dentro de la misma carpeta. 
