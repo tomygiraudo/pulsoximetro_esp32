@@ -57,8 +57,9 @@ FONTS = [
     ("B9", 700, 9.0, False, "SpOBAJ¡CRÍTI! "),     # alert banner
     ("B6", 700, SUB_SIZE, False, "2"),             # subscript of the alert banner
     ("S15", 600, 15.0, False, "%"),                # "%" next to the SpO2 value
-    ("S13", 600, 13.0, False, "Dedo nctra"),       # "Dedo no encontrado"
-    ("S9", 600, 9.0, False, "SpOMIDEN0123456789% "),  # labels, "MIDIENDO", battery %
+    ("S13", 600, 13.0, False, "Dedo no encontrado Conectando Colocá el dedo"),  # screen titles
+    ("S9", 600, 9.0, False,                        # labels, banner, battery %, status-bar tag, subtitles
+     "SpOMIDEN0123456789% COMPLETADO ENVIADO WiFi y nube en el sensor"),
     ("S8", 600, 8.0, False, "BPM"),                # "BPM"
     ("S6", 600, SUB_SIZE, False, "2"),             # subscript of the "SpO2" label
 ]
@@ -401,6 +402,18 @@ def make_icons():
     c.stroke([(31.4, 5.4), (36.6, 10.6)], 1.7)
     c.stroke([(36.6, 5.4), (31.4, 10.6)], 1.7)
     icons["NOFINGER_X"] = c.mask()
+
+    # Big WiFi for the "connecting" screen, 48x34: the arcs of the status-bar icon at 3x, each
+    # in its own mask so the firmware can light them one after the other.
+    for i, arc in enumerate(("M13.35 22.35A10.8 10.8 0 0 1 28.65 22.35",
+                             "M7.65 16.65A18.9 18.9 0 0 1 34.35 16.65",
+                             "M1.92 10.92A27 27 0 0 1 40.08 10.92"), start=1):
+        c = Canvas(48, 34)
+        c.path_stroke(arc, 3.2, shift=(3, 0))
+        icons[f"WIFIBIG_ARC{i}"] = c.mask()
+    c = Canvas(48, 34)
+    c.circle(24, 28.8, 3.3)
+    icons["WIFIBIG_DOT"] = c.mask()
 
     # Heart at HEART_SCALES sizes, scaled about the svg's transform-origin (8, 7).
     hearts = []

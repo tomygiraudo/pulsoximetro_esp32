@@ -23,6 +23,7 @@ class Max30102 {
   static constexpr uint8_t ERR_BAD_PART_ID = 0xF1;   // answered, but it is not a MAX30102
   static constexpr uint8_t ERR_RESET_TIMEOUT = 0xF2; // soft reset did not complete
   static constexpr uint8_t ERR_READBACK = 0xF3;      // a register did not keep the value written
+  static constexpr uint8_t ERR_BAD_PTRS = 0xF4;      // FIFO pointers out of range: a corrupted read
 
   // Wire must already be started (Wire.begin) by the caller. Probes the sensor,
   // checks PART_ID and soft-resets it, which also clears LED currents and mode
@@ -42,6 +43,18 @@ class Max30102 {
   // Samples lost because the FIFO overran, since the last configure().
   uint32_t overflowCount() const { return overflow_; }
 
+  // Corrupt samples that readFifo() caught and replaced, since begin(). A bus glitch reads as
+  // all ones: six 0xFF bytes, both channels at once. Left alone it would be a full-scale sample,
+  // 262143 on both channels, in the middle of a ~90000 signal: it clips the filters and makes
+  // SpO2 invalid for the 10 s the saturation stays in the window. (The 6 bits above the 18th of
+  // a good sample are junk, not zeros: they are masked, not checked.)
+  uint32_t corruptCount() const { return corrupt_; }
+
+#ifdef PULSOX_TEST_HOOKS
+  // Test builds: the next sample read comes out as all ones, as after a bus glitch.
+  void testCorruptNextSample() { testCorrupt_ = true; }
+#endif
+
   // Error of the last failed I2C attempt (0 if none yet).
   uint8_t lastError() const { return lastErr_; }
   static const char *errorText(uint8_t err);
@@ -56,4 +69,11 @@ class Max30102 {
   TwoWire *wire_ = nullptr;
   uint8_t lastErr_ = 0;
   uint32_t overflow_ = 0;
+  uint32_t corrupt_ = 0;
+  uint8_t corruptRun_ = 0;   // all-ones samples in a row
+  PpgSample last_ = {0, 0};  // the latest good sample: what a corrupt one is replaced with
+  bool haveLast_ = false;
+#ifdef PULSOX_TEST_HOOKS
+  bool testCorrupt_ = false;
+#endif
 };

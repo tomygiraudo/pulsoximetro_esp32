@@ -9,8 +9,8 @@ int ppg_csv_d(char *buf, size_t size, uint32_t n, uint32_t red, uint32_t ir, con
 }
 
 int ppg_csv_r(char *buf, size_t size, uint32_t n, const PpgOutput *o) {
-  return snprintf(buf, size, "R,%lu,%d,%.0f,%d,%.2f,%d,%.5f,%.4f,%d\n", (unsigned long)n,
+  return snprintf(buf, size, "R,%lu,%d,%.0f,%d,%.2f,%d,%.5f,%.4f,%d,%.3f\n", (unsigned long)n,
                   o->finger ? 1 : 0, (double)o->spo2, o->spo2_valid ? 1 : 0, (double)o->bpm,
                   o->bpm_valid ? 1 : 0, (double)o->r_ratio, (double)o->perfusion_index,
-                  o->saturated ? 1 : 0);
+                  o->saturated ? 1 : 0, (double)o->quality);
 }

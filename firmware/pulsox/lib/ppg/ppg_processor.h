@@ -40,6 +40,8 @@ typedef struct {
   float r_ratio;          // R, filled whenever it could be computed (even if SpO2 is not valid)
   float perfusion_index;  // % : RMS of the IR AC over the mean IR DC
   float bpm;              // provisional (valid = false) until enough beats were seen
+  float quality;          // 0..1: perfusion against QUALITY_PI_GOOD_PCT times how regular the beats are
+                          // (QUALITY_CV_BAD); 0 without finger, saturated, or before the first result
 } PpgOutput;
 
 // Intermediate values of the last sample, for the CSV stream and for validation.

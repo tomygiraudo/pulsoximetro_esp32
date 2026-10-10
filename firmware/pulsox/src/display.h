@@ -7,6 +7,9 @@
 //   measuring, caution       93-95 %   amber, steady border, "SpO2 BAJA" banner
 //   measuring, critical      <  93 %   red, 1 Hz blinking border, "¡SpO2 CRÍTICA!" banner
 //   no finger                          "ERROR / Dedo no encontrado"
+//   connecting                         "Conectando" (WiFi icon animated)
+//   waiting for the finger             "Colocá el dedo"
+//   result                             the measuring screen frozen, "COMPLETADO", sent / not sent
 //
 // Wiring it in, in main.cpp: displayBegin() once in setup(); displaySetMeasuring() or
 // displaySetNoFinger() whenever the result changes; displayPushPpg() with every PPG
@@ -44,7 +47,8 @@ DisplayAlert displayAlertFor(int spo2);
 
 // Initializes the panel (tftBegin) and allocates the frame buffer (32 KB). Call once,
 // from setup(). Returns false if there was not enough RAM; every other call is then a
-// no-op. Starts on the "no finger" screen.
+// no-op. The screen stays black, backlight off, until the first displaySet...() has drawn a
+// screen and displayUpdate() has sent it: the light comes on with it.
 bool displayBegin();
 
 // Status bar: WiFi icon (grey when not connected) and battery (0-100 %).
@@ -57,6 +61,23 @@ void displaySetMeasuring(int spo2, int bpm);
 // "Dedo no encontrado" error screen.
 void displaySetNoFinger();
 
+// "Conectando": the big WiFi icon lighting its arcs one after the other.
+void displaySetConnecting();
+
+// "Colocá el dedo": waiting for the finger once the connection is settled. The sensor icon
+// of the error screen, without the error badge.
+void displaySetWaitFinger();
+
+// Progress of the measurement as a thin bar under the banner of the measuring screen: 0-100 %,
+// or -1 to hide it (what a new measuring screen starts with).
+void displaySetProgress(int pct);
+
+// Result screen, held after the measurement: the values and the last trace frozen, a still
+// heart, "COMPLETADO" in the banner (the alert banner of the level if it is not normal) and, in
+// the status bar, whether the measurement reached the cloud ("ENVIADO") or not ("NO ENVIADO").
+// Values <= 0 show "--".
+void displaySetResult(int spo2, int bpm, bool sent);
+
 // One PPG sample, oriented so that the heartbeat points up (invert the raw IR). Call at
 // DISPLAY_PPG_INPUT_HZ. Cheap: it only feeds the trace history.
 void displayPushPpg(float sample);
@@ -64,3 +85,15 @@ void displayPushPpg(float sample);
 // Runs the animations (heart, trace, blinking border) and sends what changed to the
 // panel. Call on every loop() pass.
 void displayUpdate();
+
+// Low power. displaySleep() turns the backlight off and puts the controller in display-off
+// + sleep-in; the frame buffer is kept. displayWake() brings the controller back, redraws
+// the whole screen and only then turns the backlight on. While asleep displayUpdate() does
+// nothing. Both are no-ops when the panel is not up.
+void displaySleep();
+void displayWake();
+
+// Freezes (hold = true) or releases the lines that must keep their level in deep sleep:
+// backlight off, CS and RESET high, so the panel stays asleep and dark. Release them first
+// thing after waking, before displayBegin() touches the pins.
+void displayHoldPins(bool hold);

@@ -24,14 +24,80 @@
 #define TFT_ROTATION 2
 #define TFT_X_ADJUST -2
 #define TFT_Y_ADJUST -1
+// The backlight stays off while the panel is initialised and comes on with the first frame
+// (display.cpp), so waking up does not flash the controller's random RAM.
+#define TFT_BL_ON_AT_BEGIN 0
 
 // ---- Status bar ---------------------------------------------------------------
 // There is no battery measurement yet, and WiFi is not used: the bar shows this
 // fixed battery level (a placeholder, NOT a reading) and the WiFi icon in grey.
 #define BATTERY_PLACEHOLDER_PCT 100
 
+// ---- Button and sleep ------------------------------------------------------------
+// SW1 lives on a separate board (it is not in the KiCad): 10K pull-up to 3V3 and a 10K/1 uF
+// RC debounce to GPIO0, active low. GPIO0 is one of the pins (0-5) that can wake the
+// ESP32-C3 from sleep, by level.
+#define PIN_BUTTON 0
+#define BUTTON_DEBOUNCE_MS 30        // software debounce on top of the RC
+#define BUTTON_RELEASE_WAIT_MS 5000  // before sleeping: longest wait for a held button to be released
+#ifndef BUTTON_LOG_RAW
+#define BUTTON_LOG_RAW 0             // 1 (env `dev`): log every edge of the raw GPIO0 level, bounces included
+#endif
+#define BUTTON_STUCK_RETRY_S 60      // button still down after that wait: sleep on a timer instead
+                                     // (a GPIO wakeup would fire at once and loop), and look again
+// How the device sleeps between measurements (src/power.cpp). All of them wake on GPIO0.
+//   POWER_SLEEP_LIGHT  ~130 uA in the chip. The RAM is kept, so it resumes where it was and wakes in ms.
+//                      Works with the button board as it is: the pin is a plain input (no internal pull-up).
+//   POWER_SLEEP_DEEP   ~5 uA, but the Arduino SDK turns the internal pull-up (~18-45 kOhm) on in the wakeup
+//                      pin and the project cannot turn it off: R5 of the button board has to be ~3 kOhm or
+//                      less, or a press does not pull the pin low enough to wake it (env `deep-sleep`).
+//   POWER_SLEEP_SIM    env `dev`: no sleep at all, the CPU and the USB port stay up.
+#define POWER_SLEEP_SIM 0
+#define POWER_SLEEP_DEEP 1
+#define POWER_SLEEP_LIGHT 2
+#ifndef POWER_SLEEP_MODE
+#define POWER_SLEEP_MODE POWER_SLEEP_LIGHT
+#endif
+#define BOOT_WINDOW_MS 5000          // after a cold boot: time to flash or open the monitor before sleeping
+#define SERIAL_WAIT_ON_WAKE_MS 0     // waking from deep sleep: do not wait for the monitor (USB comes
+                                     // back re-enumerated, waiting would only cost battery)
+
+// ---- Measurement flow ---------------------------------------------------------------
+#define CONNECT_MAX_MS 40000         // longest the cloud may take to connect (WiFi + login + first writes)
+#define FINGER_WAIT_S 30             // connected (or failed) and nobody puts a finger on: back to sleep
+#define RESULT_SHOW_S 120            // the result stays on the screen this long, then deep sleep (the button measures again)
+#define ERROR_SHOW_S 120             // same for the "no finger" screen after a discarded measurement
+
+// What makes a measurement good, finished or invalid (lib/ppg/ppg_session.c, fed once per second
+// from the measurement start). Starting points, tuned against firmware/pulsox/captures.
+#define MEAS_MIN_S 45                // earliest end of a good measurement
+#define MEAS_MAX_S 60                // latest end: not enough valid seconds by then, it is discarded
+#define MEAS_MIN_VALID_S 15          // valid seconds needed (after the warm-up) to finish
+#define MEAS_WARMUP_S 20             // the first seconds do not count: the filters and the 10 s window fill up
+#define MEAS_RESULT_WINDOW_S 20      // the result is the median of the valid seconds of the last ones
+#define MEAS_RESULT_MIN_N 5          // ... and there must be at least this many in that window
+#define MEAS_QUALITY_MIN 0.10f       // a second with SpO2 and BPM valid still counts as bad below this quality
+#define MEAS_FINGER_LOST_S 1         // finger away this many seconds in a row: discarded
+#define MEAS_INVALID_MAX_S 15        // this many bad seconds in a row: "erratic signal", discarded (a third of the
+                                     // measurement). Even a 1 s clip to full scale makes ~15: SpO2 is not valid
+                                     // while it is in the 10 s window and the filters take a few seconds to recover
+#define MEAS_SATURATED_MAX_S 15      // saturated this many seconds in a row: the sensor is clipping
+
+// ---- Cloud (Firebase Realtime Database, PROTOCOL.md "Transporte en la nube") -------------
+// WiFi and Firebase credentials live in include/secrets.h (gitignored, see secrets.h.example).
+#define DB_HOST "pulsoximetro-esp-default-rtdb.firebaseio.com"  // databaseURL without scheme
+#define DEVICE_ID "pulsox-4ba0e4ea46d7"
+#define FW_VERSION "pulsox-0.2.0"
+#define WIFI_CONNECT_TIMEOUT_MS 10000  // the whole WiFi association; login and the first writes come after
+#ifndef CLOUD_FORCE_OFFLINE
+#define CLOUD_FORCE_OFFLINE 0          // 1 (env `dev-offline`): never connects, to test the "measure without sending" path
+#endif
+#define CLOUD_TASK_STACK 12288         // bytes: the TLS handshake needs well over the 8 KB of the loop task
+#define CLOUD_PPG_FS 50                // samples/s in `live.ppg`: the 100 sps view trace, averaged in pairs
+#define CLOUD_CLOSE_TIMEOUT_MS 10000   // before sleeping: longest wait for the cloud to finish what it is doing
+
 // ---- Runtime ------------------------------------------------------------------
-#define SERIAL_WAIT_MS 4000          // max wait for the monitor at boot (USB-CDC)
+#define SERIAL_WAIT_MS 4000          // max wait for the monitor at a cold boot (USB-CDC)
 #define SERIAL_TX_TIMEOUT_MS 5       // longest a Serial write may wait for the host; never 0 (see serial_stream.cpp)
 #define SENSOR_RETRY_MS 2000         // how often to retry while the sensor is missing
 #define I2C_FAILS_BEFORE_LOST 10     // consecutive failed polls before declaring the sensor lost
@@ -102,5 +168,8 @@
 #define SPO2_MIN_VALID 80          // % : a reading below this is reported as not valid
 
 // ---- Signal quality ---------------------------------------------------------------------
-#define QUALITY_PI_GOOD_PCT 1.0f   // perfusion index (AC/DC, %) that counts as a good signal
+#define QUALITY_PI_GOOD_PCT 0.3f   // perfusion index (AC/DC, %) that counts as a good signal: the median of
+                                   // the good captures is 0.14-0.40 % at ~7 mA
+#define QUALITY_PI_MAX_PCT 2.0f    // ... and above this there is far more AC than a pulse has (motion or
+                                   // noise: +-10 % random noise reads 1.5-3 %): the quality is 0
 #define QUALITY_CV_BAD 0.30f       // RR coefficient of variation that drives the score to 0
