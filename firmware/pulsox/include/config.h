@@ -79,6 +79,9 @@
 #define DEVICE_ID "pulsox-4ba0e4ea46d7"
 #define FW_VERSION "pulsox-0.2.0"
 #define WIFI_CONNECT_TIMEOUT_MS 10000  // the whole WiFi association; login and the first writes come after
+#ifndef CLOUD_FORCE_OFFLINE
+#define CLOUD_FORCE_OFFLINE 0          // 1 (env `dev-offline`): never connects, to test the "measure without sending" path
+#endif
 #define CLOUD_TASK_STACK 12288         // bytes: the TLS handshake needs well over the 8 KB of the loop task
 #define CLOUD_PPG_FS 50                // samples/s in `live.ppg`: the 100 sps view trace, averaged in pairs
 #define CLOUD_CLOSE_TIMEOUT_MS 10000   // before sleeping: longest wait for the cloud to finish what it is doing

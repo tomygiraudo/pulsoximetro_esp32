@@ -11,6 +11,7 @@ static constexpr size_t SAMPLE_BYTES = 6;      // RED (3 bytes) + IR (3 bytes)
 static constexpr size_t FIFO_DEPTH = 32;
 static constexpr size_t FIFO_CHUNK = 16;       // samples per I2C read: 96 bytes, fits Wire's 128 B buffer
 static constexpr uint32_t ADC_MASK = 0x3FFFF;  // 18 bit
+static constexpr uint8_t MAX_CORRUPT_RUN = 3;  // consecutive all-ones samples replaced; more is a real saturation
 
 // ---- I2C access -------------------------------------------------------------
 bool Max30102::writeReg(uint8_t reg, uint8_t val) {
@@ -85,6 +86,9 @@ bool Max30102::softReset() {
 bool Max30102::begin(TwoWire &wire) {
   wire_ = &wire;
   overflow_ = 0;
+  corrupt_ = 0;
+  corruptRun_ = 0;
+  haveLast_ = false;
 
   wire_->beginTransmission(ADDR);  // throwaway probe: absorbs the first (failing) transaction
   wire_->endTransmission();
@@ -139,17 +143,39 @@ int Max30102::readFifo(PpgSample *buf, size_t max) {
   }
   if (pending > max) pending = max;  // the rest stays in the FIFO for the next call
 
-  size_t got = 0;
+  size_t got = 0;  // samples taken out of the FIFO
+  size_t out = 0;  // samples returned: a corrupt one comes back as the previous good one (the time axis
+                   // stays right), or is dropped if there is none yet
   while (got < pending) {
     size_t chunk = pending - got < FIFO_CHUNK ? pending - got : FIFO_CHUNK;
     uint8_t raw[FIFO_CHUNK * SAMPLE_BYTES];
-    if (!readBytes(FIFO_DATA, raw, chunk * SAMPLE_BYTES)) return got > 0 ? (int)got : -1;
+    if (!readBytes(FIFO_DATA, raw, chunk * SAMPLE_BYTES)) return got > 0 ? (int)out : -1;
+#ifdef PULSOX_TEST_HOOKS
+    if (testCorrupt_) {
+      memset(raw, 0xFF, SAMPLE_BYTES);
+      testCorrupt_ = false;
+    }
+#endif
     for (size_t i = 0; i < chunk; i++) {
       const uint8_t *s = &raw[i * SAMPLE_BYTES];  // RED (LED1) first, then IR (LED2)
-      buf[got + i].red = (((uint32_t)s[0] << 16) | ((uint32_t)s[1] << 8) | s[2]) & ADC_MASK;
-      buf[got + i].ir = (((uint32_t)s[3] << 16) | ((uint32_t)s[4] << 8) | s[5]) & ADC_MASK;
+      // The 6 bits above the 18th are NOT zero in good samples: with a finger on the sensor they carry
+      // junk (0x04, 0x09... in the first byte) while the 18 low bits are a clean ramp. They are masked
+      // off, never checked. What a bus glitch gives is all six bytes at 0xFF, on both channels at once.
+      const bool allOnes = s[0] == 0xFF && s[1] == 0xFF && s[2] == 0xFF && s[3] == 0xFF && s[4] == 0xFF &&
+                           s[5] == 0xFF;
+      if (allOnes && corruptRun_ < MAX_CORRUPT_RUN) {  // a longer run would be a real saturation: let it through
+        corrupt_++;
+        corruptRun_++;
+        if (haveLast_) buf[out++] = last_;
+        continue;
+      }
+      corruptRun_ = 0;
+      last_.red = (((uint32_t)s[0] << 16) | ((uint32_t)s[1] << 8) | s[2]) & ADC_MASK;
+      last_.ir = (((uint32_t)s[3] << 16) | ((uint32_t)s[4] << 8) | s[5]) & ADC_MASK;
+      haveLast_ = true;
+      buf[out++] = last_;
     }
     got += chunk;
   }
-  return (int)got;
+  return (int)out;
 }

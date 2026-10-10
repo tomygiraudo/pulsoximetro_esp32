@@ -5,6 +5,7 @@
 //        "# R,..." / "# E,..." header lines naming the columns, which is what
 //        tools/capture.py records. The D and R formats live in lib/ppg/ppg_csv.h.
 //   'b'  presses the button (buttonInject), to test the wake / start flow without the hardware
+//   'g'  corrupts the next sample read (test builds only), to test the driver's integrity check
 // Data lines start with 'D,' / 'R,' / 'E,' and log lines with '[', so a parser can
 // tell them apart without any framing.
 #pragma once
@@ -23,6 +24,10 @@ void streamBegin();
 void streamPollCommands();
 
 StreamMode streamMode();
+
+// True once after the host sent 'g': the next sample read from the sensor is to be corrupted, to
+// test that the driver catches it (only test builds, PULSOX_TEST_HOOKS, act on it).
+bool streamTakeGlitchRequest();
 
 // One raw sample and what the pipeline made of it. `n` counts samples since the
 // sensor was started.

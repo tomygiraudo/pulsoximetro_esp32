@@ -67,7 +67,12 @@ bool bootCloud() {
 void doConnect() {
   setState(LinkState::CONNECTING);
   uint32_t t0 = millis();
+#if CLOUD_FORCE_OFFLINE
+  delay(3000);  // test build: no network at all, after about as long as a failed attempt takes to give up
+  bool ok = false;
+#else
   bool ok = bootCloud();
+#endif
   DBG("CLOU", "%s en %lu ms", ok ? "nube lista" : "SIN NUBE (se mide igual, sin enviar)",
       (unsigned long)(millis() - t0));
   setState(ok ? LinkState::READY : LinkState::OFFLINE);

@@ -54,6 +54,7 @@ static bool streaming = false;       // the sensor is sampling
 static uint8_t i2cFails = 0;
 static uint32_t sampleIndex = 0;     // samples since the sensor was started
 static uint32_t lastOverflow = 0;
+static uint32_t lastCorrupt = 0;
 static PpgSample lastSample = {0, 0};
 static uint16_t samplesInWindow = 0;
 static uint32_t statsAt = 0;
@@ -116,6 +117,7 @@ static bool startSensor() {
   i2cFails = 0;
   sampleIndex = 0;
   lastOverflow = 0;
+  lastCorrupt = 0;
   samplesInWindow = 0;
   fingerPresent = false;
   ppg_init(&ppg);
@@ -263,6 +265,9 @@ static void onSecond(const PpgOutput &o) {
 
 static void pollSensor() {
   PpgSample buf[32];
+#ifdef PULSOX_TEST_HOOKS
+  if (streamTakeGlitchRequest()) sensor.testCorruptNextSample();
+#endif
   int n = sensor.readFifo(buf, sizeof(buf) / sizeof(buf[0]));
   if (n < 0) {
     i2cFails++;
@@ -279,6 +284,12 @@ static void pollSensor() {
     lastOverflow = overflow;
     streamEvent(sampleIndex, "fifo_overflow", overflow);
     DBG("MAX", "el FIFO desbordo: %lu muestras perdidas en total", (unsigned long)overflow);
+  }
+  const uint32_t corrupt = sensor.corruptCount();
+  if (corrupt != lastCorrupt) {  // the driver already replaced them: this is only to know how often the bus glitches
+    lastCorrupt = corrupt;
+    streamEvent(sampleIndex, "bad_sample", corrupt);
+    DBG("MAX", "muestra corrupta reemplazada por la anterior (lectura I2C basura): %lu en total", (unsigned long)corrupt);
   }
 
   for (int i = 0; i < n; i++) {
@@ -309,9 +320,10 @@ static void pollSensor() {
 static void printStats() {
   if (millis() - statsAt < STATS_PERIOD_MS) return;
   statsAt += STATS_PERIOD_MS;
-  DBG("LIVE", "%u muestras/s | red=%lu ir=%lu | overflows=%lu | fallos I2C=%u | pantalla max %lu us",
+  DBG("LIVE", "%u muestras/s | red=%lu ir=%lu | overflows=%lu corruptas=%lu | fallos I2C=%u | pantalla max %lu us",
       samplesInWindow, (unsigned long)lastSample.red, (unsigned long)lastSample.ir,
-      (unsigned long)sensor.overflowCount(), i2cFails, (unsigned long)displayWorstUs);
+      (unsigned long)sensor.overflowCount(), (unsigned long)sensor.corruptCount(), i2cFails,
+      (unsigned long)displayWorstUs);
   samplesInWindow = 0;
   displayWorstUs = 0;
 }

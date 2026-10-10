@@ -5,6 +5,7 @@
 #include "ppg_csv.h"
 
 static StreamMode mode = StreamMode::SUMMARY;
+static bool glitchRequested = false;
 
 // The timeout must NOT be 0: in the Arduino core's HWCDC::write(), 0 makes the "nobody is
 // reading" countdown wrap around, and a write to a USB port that is open (or plugged into a
@@ -14,6 +15,12 @@ static StreamMode mode = StreamMode::SUMMARY;
 void streamBegin() { Serial.setTxTimeoutMs(SERIAL_TX_TIMEOUT_MS); }
 
 StreamMode streamMode() { return mode; }
+
+bool streamTakeGlitchRequest() {
+  const bool requested = glitchRequested;
+  glitchRequested = false;
+  return requested;
+}
 
 // Printed every time CSV mode is requested, so a capture always starts with them.
 static void printHeaders() {
@@ -37,6 +44,10 @@ void streamPollCommands() {
       case 'b':
         buttonInject();
         DBG("CMD", "boton simulado");
+        break;
+      case 'g':
+        glitchRequested = true;
+        DBG("CMD", "glitch pedido (solo hace algo en las compilaciones de prueba)");
         break;
       default:  // CR / LF / anything else: ignored
         break;
