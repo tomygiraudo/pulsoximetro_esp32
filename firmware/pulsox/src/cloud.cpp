@@ -2,6 +2,7 @@
 
 #include <WiFi.h>
 
+#include "config.h"
 #include "debug_log.h"
 #include "root_ca.h"
 #include "secrets.h"
@@ -14,20 +15,73 @@ static const uint32_t AUTH_BACKOFF_MS = 5000;  // after a failed login, no new a
 
 // ---------------------------------------------------------------- helpers
 
+// The known networks, in order of preference. secrets.h either lists them (WIFI_NETWORKS) or, as it
+// always did, names just one (WIFI_SSID / WIFI_PASSWORD).
+struct WifiNetwork {
+  const char *ssid;
+  const char *password;
+};
+static const WifiNetwork NETWORKS[] = {
+#ifdef WIFI_NETWORKS
+    WIFI_NETWORKS
+#else
+    {WIFI_SSID, WIFI_PASSWORD}
+#endif
+};
+static const int NETWORK_COUNT = sizeof(NETWORKS) / sizeof(NETWORKS[0]);
+static_assert(NETWORK_COUNT >= 1, "secrets.h: at least one WiFi network");
+
+// The chip reports it through an event when its own search of the SSID ends without finding it. The
+// status of WiFi.status() cannot be used for that: it still holds the one of the previous attempt right
+// after WiFi.begin().
+static volatile bool noApFound = false;
+static void onWifiEvent(arduino_event_id_t, arduino_event_info_t info) {
+  if (info.wifi_sta_disconnected.reason == WIFI_REASON_NO_AP_FOUND) noApFound = true;
+}
+
+// Tries to join network `index` for up to timeoutMs. The SSIDs are never logged: only the position in the
+// list. With several networks, one the chip cannot find is dropped at once (~2-3 s, what its search of the
+// name takes) instead of waiting out the whole timeout.
+static bool joinNetwork(int index, uint32_t timeoutMs) {
+  static bool listening = false;
+  if (!listening) {
+    WiFi.onEvent(onWifiEvent, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+    listening = true;
+  }
+  WiFi.disconnect();
+  noApFound = false;
+  WiFi.begin(NETWORKS[index].ssid, NETWORKS[index].password);
+  const uint32_t start = millis();
+  bool gone = false;
+  while (WiFi.status() != WL_CONNECTED && millis() - start < timeoutMs) {
+    if (NETWORK_COUNT > 1 && noApFound) {
+      gone = true;
+      break;
+    }
+    delay(100);
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    DBG("WIFI", "conectado a la red %d de %d: IP %s RSSI %d dBm (%lu ms)", index + 1, NETWORK_COUNT,
+        WiFi.localIP().toString().c_str(), (int)WiFi.RSSI(), (unsigned long)(millis() - start));
+    return true;
+  }
+  DBG("WIFI", "%s la red %d de %d tras %lu ms (status %d)", gone ? "no encuentra" : "sin conexion con", index + 1,
+      NETWORK_COUNT, (unsigned long)(millis() - start), (int)WiFi.status());
+  return false;
+}
+
+// timeoutMs is per network. The known networks are tried in order of preference, within WIFI_MAX_TOTAL_MS,
+// each one directly (no scan of its own, so a hidden SSID works too): the first that connects wins.
 bool wifiConnect(uint32_t timeoutMs) {
   WiFi.persistent(false);  // no flash write of the credentials on every boot
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  uint32_t start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < timeoutMs) delay(100);
-  if (WiFi.status() != WL_CONNECTED) {
-    DBG("WIFI", "sin conexion tras %lu ms (status %d)", (unsigned long)(millis() - start), (int)WiFi.status());
-    return false;
+  const uint32_t start = millis();
+  for (int k = 0; k < NETWORK_COUNT && millis() - start < WIFI_MAX_TOTAL_MS; k++) {
+    if (joinNetwork(k, timeoutMs)) return true;
   }
-  DBG("WIFI", "conectado: IP %s RSSI %d dBm (%lu ms)", WiFi.localIP().toString().c_str(), (int)WiFi.RSSI(),
-      (unsigned long)(millis() - start));
-  return true;
+  DBG("WIFI", "ninguna de las %d redes conocidas conecto (%lu ms)", NETWORK_COUNT, (unsigned long)(millis() - start));
+  return false;
 }
 
 String jsonEscape(const char* s) {

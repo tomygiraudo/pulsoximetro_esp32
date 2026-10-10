@@ -41,8 +41,27 @@ botón ─► CONECTANDO ─► ESPERA_DEDO ─► MIDIENDO ─┬─► RESULTA
 
 1. Copiá `include/secrets.h.example` a `include/secrets.h` y completá el WiFi y las
    credenciales de Firebase (mismos valores que `tools/cloud/.env`). `secrets.h`
-   está en `.gitignore`: no se commitea. La red tiene que ser de **2,4 GHz**.
-2. Compilá y subí, con la placa por USB (en Windows, PlatformIO a veces elige un COM
+   está en `.gitignore`: no se commitea. Las redes tienen que ser de **2,4 GHz**.
+2. **Varias redes.** `WIFI_NETWORKS` es una lista en **orden de preferencia**:
+
+   ```c
+   #define WIFI_NETWORKS \
+     {"red-de-casa", "clave-casa"}, \
+     {"hotspot-del-celu", "clave-celu"}
+   ```
+
+   Prueba las redes **en el orden de la lista** (no la de más señal) y se queda con la
+   primera que conecta. Una red que el chip no encuentra se descarta a los ~2,5 s, lo
+   que tarda su búsqueda del nombre, y no tras el timeout de 10 s; el total está
+   topado en 25 s. Si ninguna conecta, la medición sigue sin nube ("NO ENVIADO").
+   Probar cada red directo, sin escanear antes, es lo que da el mejor tiempo (un
+   escaneo completo cuesta ~6 s) y hace que las redes ocultas también anden. El
+   formato viejo, `WIFI_SSID` y `WIFI_PASSWORD`, sigue andando si no definís
+   `WIFI_NETWORKS`. Las claves se compilan adentro del firmware: cambiar la lista
+   implica **volver a subirlo**. El log dice la posición de la red ("red 2 de 3"),
+   nunca su nombre. Poné primero la que más usás: cada red anterior que no esté a
+   tu alcance suma ~2,5 s a la conexión.
+3. Compilá y subí, con la placa por USB (en Windows, PlatformIO a veces elige un COM
    Bluetooth: indicá el puerto con `--upload-port`):
 
 ```
