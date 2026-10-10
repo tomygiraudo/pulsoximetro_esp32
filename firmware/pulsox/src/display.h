@@ -7,6 +7,9 @@
 //   measuring, caution       93-95 %   amber, steady border, "SpO2 BAJA" banner
 //   measuring, critical      <  93 %   red, 1 Hz blinking border, "¡SpO2 CRÍTICA!" banner
 //   no finger                          "ERROR / Dedo no encontrado"
+//   connecting                         "Conectando" (WiFi icon animated)
+//   waiting for the finger             "Colocá el dedo"
+//   result                             the measuring screen frozen, "COMPLETADO", sent / not sent
 //
 // Wiring it in, in main.cpp: displayBegin() once in setup(); displaySetMeasuring() or
 // displaySetNoFinger() whenever the result changes; displayPushPpg() with every PPG
@@ -56,6 +59,23 @@ void displaySetMeasuring(int spo2, int bpm);
 
 // "Dedo no encontrado" error screen.
 void displaySetNoFinger();
+
+// "Conectando": the big WiFi icon lighting its arcs one after the other.
+void displaySetConnecting();
+
+// "Colocá el dedo": waiting for the finger once the connection is settled. The sensor icon
+// of the error screen, without the error badge.
+void displaySetWaitFinger();
+
+// Progress of the measurement as a thin bar under the banner of the measuring screen: 0-100 %,
+// or -1 to hide it (what a new measuring screen starts with).
+void displaySetProgress(int pct);
+
+// Result screen, held after the measurement: the values and the last trace frozen, a still
+// heart, "COMPLETADO" in the banner (the alert banner of the level if it is not normal) and, in
+// the status bar, whether the measurement reached the cloud ("ENVIADO") or not ("NO ENVIADO").
+// Values <= 0 show "--".
+void displaySetResult(int spo2, int bpm, bool sent);
 
 // One PPG sample, oriented so that the heartbeat points up (invert the raw IR). Call at
 // DISPLAY_PPG_INPUT_HZ. Cheap: it only feeds the trace history.

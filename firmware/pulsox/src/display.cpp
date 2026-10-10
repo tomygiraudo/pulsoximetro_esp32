@@ -73,6 +73,11 @@ constexpr int NF_ICON_X = 43, NF_ICON_Y = 25;  // "no finger" icon, 42x40 center
 constexpr int NF_ERROR_BASE = 92;
 constexpr int NF_TEXT_BASE = 110;
 
+constexpr int PROGRESS_X = 4, PROGRESS_Y = 124, PROGRESS_W = 120, PROGRESS_H = 2;  // under the banner
+constexpr int TAG_X = 24, TAG_BASE = 11;     // "ENVIADO" / "NO ENVIADO" in the status bar of the result
+constexpr int CONN_ICON_X = 40, CONN_ICON_Y = 28;  // big WiFi, 48x34
+constexpr int TITLE_BASE = 92, SUBTITLE_BASE = 108;  // "Conectando" / "Colocá el dedo" and their subtitles
+
 // Letter-spacing of the mockups, in 1/16 px (em x font size).
 constexpr int TRACK_LABEL = 9;    // "SpO2" label: .06em x 9 px
 constexpr int TRACK_BANNER = 12;  // alert banner: .08em x 9 px
@@ -88,9 +93,11 @@ constexpr uint32_t SEEK_FRAME_MS = 50;
 constexpr uint32_t SEEK_PERIOD_MS = 1200;
 constexpr uint32_t ALARM_PERIOD_MS = 1000;
 constexpr uint8_t ALARM_DIM = 31;  // the border never goes fully off: 12 % opacity
+constexpr uint32_t CONN_STEP_MS = 350;  // "connecting": a new arc lights up this often
+constexpr uint8_t CONN_ARC_DIM = 46;    // the arcs not lit yet: 18 % opacity
 
 // ---- State --------------------------------------------------------------------------
-enum class Scene : uint8_t { NONE, MEASURING, NO_FINGER };
+enum class Scene : uint8_t { NONE, MEASURING, NO_FINGER, CONNECTING, WAIT_FINGER, RESULT };
 
 uint16_t *fb = nullptr;   // frame buffer, native byte order (the SPI driver swaps)
 uint8_t *cov = nullptr;   // trace coverage, PLOT_ROWS x PLOT_COLS, 0-16
@@ -119,6 +126,11 @@ bool scaleValid = false;
 uint32_t plotMs = 0;
 
 bool asleep = false;           // panel in sleep-in, backlight off (displaySleep)
+
+int progressPct = -1;          // measuring screen: 0-100 draws the bar under the banner, -1 hides it
+bool resultSent = false;       // result screen: the measurement reached the cloud
+int8_t connStep = 0;           // connecting screen: arcs lit, 0-3
+uint32_t connMs = 0;
 
 uint32_t alarmT0 = 0;
 int8_t alarmOn = -1;           // blink state on screen, -1 = unknown
@@ -335,7 +347,7 @@ uint16_t levelColor() {
 // None of these touch the alert border (the outer 2 px), so the border can be left alone.
 
 void drawStatusBar() {
-  const bool borderOn = scene == Scene::MEASURING && alertLevel != DisplayAlert::NORMAL;
+  const bool borderOn = (scene == Scene::MEASURING || scene == Scene::RESULT) && alertLevel != DisplayAlert::NORMAL;
   fillRect(2, 2, W - 4, BAR_LINE_Y - 2, C_BG);
   if (borderOn) {
     fillRect(2, BAR_LINE_Y, W - 4, 1, C_LINE);  // the ends belong to drawBorder()
@@ -352,7 +364,18 @@ void drawStatusBar() {
 
   char text[8];
   snprintf(text, sizeof(text), "%u%%", (unsigned)battPct);
-  drawText(FONT_S9, BATT_TEXT_RIGHT * 16 - textWidth(FONT_S9, text), BATT_TEXT_BASE, text, C_BATTERY);
+  const int battLeft16 = BATT_TEXT_RIGHT * 16 - textWidth(FONT_S9, text);
+
+  // The result screen says in the bar whether the measurement reached the cloud. If the tag and the
+  // battery percentage do not both fit, the percentage goes: the battery icon still shows the level.
+  bool showBattText = true;
+  if (scene == Scene::RESULT) {
+    const char *tag = resultSent ? "ENVIADO" : "NO ENVIADO";
+    const int tagEnd16 = TAG_X * 16 + textWidth(FONT_S9, tag);
+    drawText(FONT_S9, TAG_X * 16, TAG_BASE, tag, resultSent ? C_NORMAL : C_CAUTION);
+    showBattText = tagEnd16 + 3 * 16 <= battLeft16;
+  }
+  if (showBattText) drawText(FONT_S9, battLeft16, BATT_TEXT_BASE, text, C_BATTERY);
   markDirty(0, 0, W, BAR_LINE_Y + 1);
 }
 
@@ -389,7 +412,7 @@ void drawBanner() {
   fillRect(BANNER_X, BANNER_Y, BANNER_W, BANNER_H, C_BG);
   const int cx = BANNER_X + BANNER_W / 2;
   if (alertLevel == DisplayAlert::NORMAL) {
-    const char *text = "MIDIENDO";
+    const char *text = scene == Scene::RESULT ? "COMPLETADO" : "MIDIENDO";
     int total = 4 * 16 + 4 * 16 + textWidth(FONT_S9, text, TRACK_MEASURING);  // dot, gap, text
     int left = cx * 16 - total / 2;
     fillRoundRect((left + 8) >> 4, BANNER_Y + 4, 4, 4, 2, C_NORMAL);
@@ -405,6 +428,18 @@ void drawBanner() {
     drawText(FONT_B9, left + 12 * 16, BANNER_TEXT_BASE, text, C_BG, TRACK_BANNER, &FONT_B6);
   }
   markDirty(BANNER_X, BANNER_Y, BANNER_W, BANNER_H);
+}
+
+// Progress of the measurement: a thin bar right under the banner, in the color of the alert level.
+void drawProgress() {
+  fillRect(PROGRESS_X, PROGRESS_Y, PROGRESS_W, PROGRESS_H, C_BG);
+  if (progressPct >= 0) {
+    fillRect(PROGRESS_X, PROGRESS_Y, PROGRESS_W, PROGRESS_H, C_LINE);
+    int w = PROGRESS_W * progressPct / 100;
+    if (progressPct > 0 && w < 1) w = 1;
+    fillRect(PROGRESS_X, PROGRESS_Y, w, PROGRESS_H, levelColor());
+  }
+  markDirty(PROGRESS_X, PROGRESS_Y, PROGRESS_W, PROGRESS_H);
 }
 
 // Alert border, 2 px around the whole screen. alpha 0 clears it. The only thing under it
@@ -564,7 +599,10 @@ void updateHeart(uint32_t now, bool force) {
   uint32_t dt = force ? 0 : now - heartMs;
   heartMs = now;
   float scale, opacity;
-  if (bpmValue > 0) {
+  if (scene == Scene::RESULT) {
+    scale = 1.0f;  // the result is final: a still, bright heart
+    opacity = 1.0f;
+  } else if (bpmValue > 0) {
     if (dt > 200) dt = 200;  // after a stall, do not jump through several beats
     heartPhase += dt * bpmValue / 60000.0f;
     heartPhase -= floorf(heartPhase);
@@ -590,18 +628,22 @@ void renderMeasuring() {
   updateHeart(millis(), true);
   drawPlot();
   drawBanner();
+  if (scene == Scene::MEASURING) drawProgress();
   alarmOn = -1;
   alarmT0 = millis();
   if (alertLevel == DisplayAlert::CAUTION) drawBorder(255);
   markDirty(0, 0, W, H);
 }
 
-void drawNoFingerIcon(uint8_t arcOpacity) {
+// The sensor with its arc; `badge` adds the red "X" of the error screen.
+void drawNoFingerIcon(uint8_t arcOpacity, bool badge) {
   fillRect(NF_ICON_X, NF_ICON_Y, 42, 40, C_BG);
   drawIcon(ICON_NOFINGER_ARC, NF_ICON_X, NF_ICON_Y, C_TEXT2, arcOpacity);
   drawIcon(ICON_NOFINGER_BODY, NF_ICON_X, NF_ICON_Y, C_TEXT2);
-  drawIcon(ICON_NOFINGER_BADGE, NF_ICON_X, NF_ICON_Y, C_CRITICAL);
-  drawIcon(ICON_NOFINGER_X, NF_ICON_X, NF_ICON_Y, C_BG);
+  if (badge) {
+    drawIcon(ICON_NOFINGER_BADGE, NF_ICON_X, NF_ICON_Y, C_CRITICAL);
+    drawIcon(ICON_NOFINGER_X, NF_ICON_X, NF_ICON_Y, C_BG);
+  }
   markDirty(NF_ICON_X, NF_ICON_Y, 42, 40);
 }
 
@@ -617,9 +659,41 @@ void renderNoFinger() {
   fillRect(0, 0, W, H, C_BG);
   drawStatusBar();
   seekOpacityDrawn = (int8_t)seekOpacityAt(millis());
-  drawNoFingerIcon((uint8_t)(seekOpacityDrawn * 17));
+  drawNoFingerIcon((uint8_t)(seekOpacityDrawn * 17), true);
   drawTextCentered(FONT_B20, W / 2, NF_ERROR_BASE, "ERROR", C_CRITICAL, TRACK_ERROR);
   drawTextCentered(FONT_S13, W / 2, NF_TEXT_BASE, "Dedo no encontrado", C_TEXT);
+  markDirty(0, 0, W, H);
+}
+
+// Connected (or not), waiting for the finger: the same sensor and animated arc, no error badge.
+void renderWaitFinger() {
+  fillRect(0, 0, W, H, C_BG);
+  drawStatusBar();
+  seekOpacityDrawn = (int8_t)seekOpacityAt(millis());
+  drawNoFingerIcon((uint8_t)(seekOpacityDrawn * 17), false);
+  drawTextCentered(FONT_S13, W / 2, TITLE_BASE, "Colocá el dedo", C_TEXT);
+  drawTextCentered(FONT_S9, W / 2, SUBTITLE_BASE, "en el sensor", C_TEXT2);
+  markDirty(0, 0, W, H);
+}
+
+// The big WiFi icon with `step` arcs lit (0 = only the dot); the rest stay dim.
+void drawConnIcon(int step) {
+  fillRect(CONN_ICON_X, CONN_ICON_Y, 48, 34, C_BG);
+  drawIcon(ICON_WIFIBIG_DOT, CONN_ICON_X, CONN_ICON_Y, C_WIFI);
+  drawIcon(ICON_WIFIBIG_ARC1, CONN_ICON_X, CONN_ICON_Y, C_WIFI, step >= 1 ? 255 : CONN_ARC_DIM);
+  drawIcon(ICON_WIFIBIG_ARC2, CONN_ICON_X, CONN_ICON_Y, C_WIFI, step >= 2 ? 255 : CONN_ARC_DIM);
+  drawIcon(ICON_WIFIBIG_ARC3, CONN_ICON_X, CONN_ICON_Y, C_WIFI, step >= 3 ? 255 : CONN_ARC_DIM);
+  markDirty(CONN_ICON_X, CONN_ICON_Y, 48, 34);
+}
+
+void renderConnecting() {
+  fillRect(0, 0, W, H, C_BG);
+  drawStatusBar();
+  connStep = 0;
+  connMs = millis();
+  drawConnIcon(connStep);
+  drawTextCentered(FONT_S13, W / 2, TITLE_BASE, "Conectando", C_TEXT);
+  drawTextCentered(FONT_S9, W / 2, SUBTITLE_BASE, "WiFi y nube", C_TEXT2);
   markDirty(0, 0, W, H);
 }
 
@@ -653,6 +727,7 @@ bool displayBegin() {
 void displaySetStatus(bool wifiConnected, uint8_t batteryPct) {
   if (!fb) return;
   if (batteryPct > 100) batteryPct = 100;
+  if (scene == Scene::RESULT) wifiConnected = wifiOn;  // the result screen owns the icon: sent or not
   if (wifiConnected == wifiOn && batteryPct == battPct) return;
   wifiOn = wifiConnected;
   battPct = batteryPct;
@@ -675,6 +750,7 @@ void displaySetMeasuring(int spo2, int bpm) {
     if (fresh) {
       scene = Scene::MEASURING;
       resetPlot();
+      progressPct = -1;
       heartPhase = 0.0f;
       heartMs = millis();
     }
@@ -693,6 +769,43 @@ void displaySetNoFinger() {
   spo2Value = 0;
   bpmValue = 0;
   renderNoFinger();
+}
+
+void displaySetConnecting() {
+  if (!fb || scene == Scene::CONNECTING) return;
+  scene = Scene::CONNECTING;
+  alertLevel = DisplayAlert::NORMAL;
+  renderConnecting();
+}
+
+void displaySetWaitFinger() {
+  if (!fb || scene == Scene::WAIT_FINGER) return;
+  scene = Scene::WAIT_FINGER;
+  alertLevel = DisplayAlert::NORMAL;
+  renderWaitFinger();
+}
+
+void displaySetProgress(int pct) {
+  if (!fb) return;
+  if (pct > 100) pct = 100;
+  if (pct < 0) pct = -1;
+  if (pct == progressPct) return;
+  progressPct = pct;
+  if (scene == Scene::MEASURING) drawProgress();
+}
+
+void displaySetResult(int spo2, int bpm, bool sent) {
+  if (!fb) return;
+  if (spo2 > 100) spo2 = 100;
+  if (bpm > 999) bpm = 999;
+  if (scene != Scene::MEASURING) resetPlot();  // no live trace to freeze: an empty plot, not an old one
+  scene = Scene::RESULT;
+  resultSent = sent;
+  wifiOn = sent;  // blue when it reached the cloud, grey when not
+  spo2Value = spo2;
+  bpmValue = bpm;
+  alertLevel = displayAlertFor(spo2);
+  renderMeasuring();
 }
 
 void displayPushPpg(float sample) {
@@ -747,11 +860,13 @@ void displayHoldPins(bool hold) {
 void displayUpdate() {
   if (!fb || asleep) return;
   const uint32_t now = millis();
-  if (scene == Scene::MEASURING) {
-    updateHeart(now, false);
-    if (plotDirty && now - plotMs >= PLOT_FRAME_MS) {
-      plotMs = now;
-      drawPlot();
+  if (scene == Scene::MEASURING || scene == Scene::RESULT) {
+    if (scene == Scene::MEASURING) {  // the result screen is a still picture: heart and trace stay as drawn
+      updateHeart(now, false);
+      if (plotDirty && now - plotMs >= PLOT_FRAME_MS) {
+        plotMs = now;
+        drawPlot();
+      }
     }
     if (alertLevel == DisplayAlert::CRITICAL) {
       const int8_t on = ((now - alarmT0) % ALARM_PERIOD_MS) < ALARM_PERIOD_MS / 2;
@@ -760,13 +875,17 @@ void displayUpdate() {
         drawBorder(on ? 255 : ALARM_DIM);
       }
     }
-  } else if (scene == Scene::NO_FINGER && now - seekMs >= SEEK_FRAME_MS) {
+  } else if ((scene == Scene::NO_FINGER || scene == Scene::WAIT_FINGER) && now - seekMs >= SEEK_FRAME_MS) {
     seekMs = now;
     const int op = seekOpacityAt(now);
     if (op != seekOpacityDrawn) {
       seekOpacityDrawn = (int8_t)op;
-      drawNoFingerIcon((uint8_t)(op * 17));
+      drawNoFingerIcon((uint8_t)(op * 17), scene == Scene::NO_FINGER);
     }
+  } else if (scene == Scene::CONNECTING && now - connMs >= CONN_STEP_MS) {
+    connMs = now;
+    connStep = (int8_t)((connStep + 1) % 4);
+    drawConnIcon(connStep);
   }
   flushDirty();
 }

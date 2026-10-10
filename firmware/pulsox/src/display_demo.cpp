@@ -13,25 +13,35 @@
 #include "debug_log.h"
 #include "display.h"
 
+enum class Kind : uint8_t { MEASURING, NO_FINGER, CONNECTING, WAIT_FINGER, RESULT };
+
 struct DemoStep {
   const char *name;
+  Kind kind;
   int spo2;       // <= 0: no value yet
   int bpm;
-  bool noFinger;
   bool wifi;
   uint8_t battery;
+  int progress;   // measuring: 0-100, -1 = no bar
+  bool sent;      // result: reached the cloud
 };
 
 static const DemoStep STEPS[] = {
-    {"A  midiendo, SpO2 normal (98 %, 72 BPM)", 98, 72, false, true, 82},
-    {"B  precaucion (94 %, 90 BPM)", 94, 90, false, true, 82},
-    {"C  critica (89 %, 120 BPM)", 89, 120, false, true, 82},
-    {"E  dedo no encontrado", 0, 0, true, true, 82},
-    {"midiendo, todavia sin valores", 0, 0, false, true, 82},
-    {"A  con WiFi desconectado y bateria al 15 %", 98, 72, false, false, 15},
+    {"conectando", Kind::CONNECTING, 0, 0, false, 82, -1, false},
+    {"coloca el dedo", Kind::WAIT_FINGER, 0, 0, true, 82, -1, false},
+    {"midiendo, todavia sin valores (progreso 8 %)", Kind::MEASURING, 0, 0, true, 82, 8, false},
+    {"A  midiendo, SpO2 normal (98 %, 72 BPM), progreso 40 %", Kind::MEASURING, 98, 72, true, 82, 40, false},
+    {"B  precaucion (94 %, 90 BPM), progreso 62 %", Kind::MEASURING, 94, 90, true, 82, 62, false},
+    {"C  critica (89 %, 120 BPM), progreso 90 %", Kind::MEASURING, 89, 120, true, 82, 90, false},
+    {"resultado normal, enviado", Kind::RESULT, 98, 72, true, 82, -1, true},
+    {"resultado normal, NO enviado", Kind::RESULT, 97, 68, false, 82, -1, false},
+    {"resultado precaucion, enviado", Kind::RESULT, 94, 90, true, 82, -1, true},
+    {"resultado critico, NO enviado", Kind::RESULT, 89, 120, false, 82, -1, false},
+    {"E  dedo no encontrado", Kind::NO_FINGER, 0, 0, true, 82, -1, false},
+    {"A  con WiFi desconectado y bateria al 15 %", Kind::MEASURING, 98, 72, false, 15, 25, false},
 };
 static const int STEP_COUNT = sizeof(STEPS) / sizeof(STEPS[0]);
-static const uint32_t STEP_MS = 6000;
+static const uint32_t STEP_MS = 5000;
 static const uint32_t SAMPLE_MS = (uint32_t)(1000.0f / SENSOR_FS_HZ);
 
 static int step = 0;
@@ -45,10 +55,15 @@ static void applyStep() {
   const DemoStep &s = STEPS[step];
   DBG("UI", "%s", s.name);
   displaySetStatus(s.wifi, s.battery);
-  if (s.noFinger) {
-    displaySetNoFinger();
-  } else {
-    displaySetMeasuring(s.spo2, s.bpm);
+  switch (s.kind) {
+    case Kind::CONNECTING: displaySetConnecting(); break;
+    case Kind::WAIT_FINGER: displaySetWaitFinger(); break;
+    case Kind::NO_FINGER: displaySetNoFinger(); break;
+    case Kind::MEASURING:
+      displaySetMeasuring(s.spo2, s.bpm);
+      displaySetProgress(s.progress);
+      break;
+    case Kind::RESULT: displaySetResult(s.spo2, s.bpm, s.sent); break;
   }
   stepAt = millis();
 }
