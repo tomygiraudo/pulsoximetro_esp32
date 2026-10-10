@@ -10,9 +10,13 @@
 //
 //   cloudLinkConnect()      WiFi + login + PUT info + DELETE live   IDLE -> CONNECTING -> READY | OFFLINE
 //   cloudLinkStartSession() POST sessions                           READY -> SESSION  (OFFLINE if it fails)
-//   cloudLinkPushTick()     PUT live (+ POST reading every 5 s)     only while SESSION
-//   cloudLinkFinish()       PATCH sessions, PATCH info, DELETE live SESSION -> CLOSING -> READY
+//   cloudLinkPushTick()     PUT live                                only while SESSION
+//   cloudLinkFinish()       POST the final reading, PATCH sessions, SESSION -> CLOSING -> READY
+//                           PATCH info, DELETE live
 //   cloudLinkAbort()        DELETE sessions/<sid>, DELETE live      SESSION -> CLOSING -> READY
+//
+// The history of a session is ONE reading, the final result: the seconds before it come from a
+// filter that is still settling. If that reading cannot be posted the session is deleted.
 //   cloudLinkDisconnect()   WiFi off                                -> IDLE
 //
 // OFFLINE means the measurement goes on without sending (no WiFi, wrong login...).
@@ -53,8 +57,8 @@ void cloudLinkBegin();
 void cloudLinkConnect();
 void cloudLinkStartSession();
 void cloudLinkPushTick(const LiveTick &tick);
-// spo2 / bpm: the result of the measurement, added to the history as its last reading when
-// both are > 0.
+// spo2 / bpm / quality: the result of the measurement, which is the only reading of the history.
+// Both spo2 and bpm have to be > 0, or the session is deleted instead.
 void cloudLinkFinish(float spo2, float bpm, float quality);
 void cloudLinkAbort();
 void cloudLinkDisconnect();

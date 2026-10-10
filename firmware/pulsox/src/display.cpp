@@ -126,6 +126,7 @@ bool scaleValid = false;
 uint32_t plotMs = 0;
 
 bool asleep = false;           // panel in sleep-in, backlight off (displaySleep)
+bool blPending = false;        // the backlight waits for the first screen (displayBegin)
 
 int progressPct = -1;          // measuring screen: 0-100 draws the bar under the banner, -1 hides it
 bool resultSent = false;       // result screen: the measurement reached the cloud
@@ -717,10 +718,8 @@ bool displayBegin() {
     cov = nullptr;
     return false;
   }
-  tftBegin();
-  displaySetNoFinger();
-  flushDirty();
-  tftBacklight(true);  // tftBegin() leaves it off (TFT_BL_ON_AT_BEGIN 0): light up with something drawn
+  tftBegin();  // black screen, backlight off (TFT_BL_ON_AT_BEGIN 0)
+  blPending = true;  // displayUpdate() lights it with the first screen that gets drawn
   return true;
 }
 
@@ -839,6 +838,7 @@ void displayWake() {
   asleep = false;
   markDirty(0, 0, W, H);
   flushDirty();
+  blPending = false;
   tftBacklight(true);
 }
 
@@ -888,4 +888,8 @@ void displayUpdate() {
     drawConnIcon(connStep);
   }
   flushDirty();
+  if (blPending && scene != Scene::NONE) {  // the first screen is on the panel: now the light, no flash of garbage
+    blPending = false;
+    tftBacklight(true);
+  }
 }

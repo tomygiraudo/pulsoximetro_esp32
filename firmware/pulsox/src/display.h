@@ -47,7 +47,8 @@ DisplayAlert displayAlertFor(int spo2);
 
 // Initializes the panel (tftBegin) and allocates the frame buffer (32 KB). Call once,
 // from setup(). Returns false if there was not enough RAM; every other call is then a
-// no-op. Starts on the "no finger" screen.
+// no-op. The screen stays black, backlight off, until the first displaySet...() has drawn a
+// screen and displayUpdate() has sent it: the light comes on with it.
 bool displayBegin();
 
 // Status bar: WiFi icon (grey when not connected) and battery (0-100 %).

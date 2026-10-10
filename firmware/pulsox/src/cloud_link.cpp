@@ -27,7 +27,6 @@ std::atomic<bool> sent{false};
 // Task-side state of the session.
 String sid;
 uint32_t seq = 0;
-uint32_t nextReadingMs = 0;
 CloudLinkStats stats = {};
 
 char liveBuf[1024];  // static: keeps the task's stack free for the TLS handshake
@@ -83,7 +82,6 @@ void doStart() {
   stats = {};
   sent = false;
   seq = 0;
-  nextReadingMs = READING_EVERY_S * 1000UL;
   xQueueReset(tickQueue);  // nothing from before this session
   String newSid;
   int code = db.post("sessions", "{\"startedAt\":{\".sv\":\"timestamp\"}}", &newSid);
@@ -117,6 +115,8 @@ bool buildLive(const LiveTick &t) {
   return ok;
 }
 
+// The only reading of the history: the result of the measurement (a median of its stable seconds).
+// The seconds before are not in it: they come from a filter that was still settling.
 bool postReading(float spo2, float bpm, float quality) {
   char body[128], path[96];
   size_t n = 0;
@@ -124,13 +124,16 @@ bool postReading(float spo2, float bpm, float quality) {
                (double)spo2, (int)lroundf(bpm), (double)quality))
     return false;
   snprintf(path, sizeof(path), "sessions/%s/readings", sid.c_str());
-  int code = db.post(path, body);
-  if (is2xx(code)) {
-    stats.readingsOk++;
-    return true;
+  for (int attempt = 1; attempt <= 3; attempt++) {  // not droppable: without it the session is empty
+    int code = db.post(path, body);
+    if (is2xx(code)) {
+      stats.readingsOk++;
+      return true;
+    }
+    stats.readingsFail++;
+    DBG("CLOU", "POST reading -> %d %s", code, db.lastError().c_str());
+    delay(500);
   }
-  stats.readingsFail++;
-  DBG("CLOU", "POST reading -> %d %s", code, db.lastError().c_str());
   return false;
 }
 
@@ -145,11 +148,6 @@ void sendTick(const LiveTick &t) {
   if (is2xx(code)) {
     stats.ticksOk++;
     if (db.lastLatencyMs() > stats.putMaxMs) stats.putMaxMs = db.lastLatencyMs();
-    if (t.spo2Valid && t.bpmValid && (int32_t)(t.elapsedMs - nextReadingMs) >= 0) {
-      nextReadingMs += READING_EVERY_S * 1000UL;
-      if ((int32_t)(t.elapsedMs - nextReadingMs) >= 0) nextReadingMs = t.elapsedMs + READING_EVERY_S * 1000UL;  // far behind
-      postReading(t.spo2, t.bpm, t.quality);
-    }
   } else if (code == CLOUD_ERR_NOWIFI) {
     stats.ticksFail++;  // skipped without trying; the next tick comes in 1 s, nothing is queued
   } else {
@@ -173,6 +171,8 @@ int patchEndedAt(const char *path) { return db.patch(path, "{\"endedAt\":{\".sv\
 int patchInfo(const char *) { return db.patch("info", "{\"updated\":{\".sv\":\"timestamp\"}}"); }
 int deleteNode(const char *path) { return db.del(path); }
 
+void deleteSession();
+
 void logSessionSummary(const char *how) {
   DBG("CLOU", "%s: ticks OK %lu fallo %lu descartados %lu | lecturas OK %lu fallo %lu | PUT live max %lu ms | heap minimo %u",
       how, (unsigned long)stats.ticksOk, (unsigned long)stats.ticksFail, (unsigned long)stats.ticksDropped,
@@ -191,7 +191,12 @@ void doFinish(const Cmd &c) {
   if (xQueueReceive(tickQueue, &last, 0) == pdTRUE) sendTick(last);  // the tick posted just before Finish
   setState(LinkState::CLOSING);
   logSessionSummary("fin");
-  if (c.spo2 > 0.0f && c.bpm > 0.0f) postReading(c.spo2, c.bpm, c.quality);
+  if (!(c.spo2 > 0.0f && c.bpm > 0.0f) || !postReading(c.spo2, c.bpm, c.quality)) {
+    // A session with no reading is an empty row in the history: better none at all.
+    DBG("CLOU", "sin lectura final: la sesion se borra");
+    deleteSession();
+    return;
+  }
 
   char path[64];
   snprintf(path, sizeof(path), "sessions/%s", sid.c_str());
@@ -203,14 +208,8 @@ void doFinish(const Cmd &c) {
   setState(LinkState::READY);
 }
 
-// The measurement was invalid: nothing of it stays in the history.
-void doAbort() {
-  if (state != (uint8_t)LinkState::SESSION) {
-    DBG("CLOU", "Abort ignorado: estado %u", (unsigned)state.load());
-    return;
-  }
-  setState(LinkState::CLOSING);
-  logSessionSummary("aborto");
+// Nothing of the session stays in the history: the session and `live` are deleted.
+void deleteSession() {
   char path[64];
   snprintf(path, sizeof(path), "sessions/%s", sid.c_str());
   bool ok = closeStep("DELETE sessions/<sid>", deleteNode, path);
@@ -218,6 +217,17 @@ void doAbort() {
   sent = false;
   DBG("CLOU", "sesion borrada%s", ok ? "" : " CON ERRORES");
   setState(LinkState::READY);
+}
+
+// The measurement was invalid.
+void doAbort() {
+  if (state != (uint8_t)LinkState::SESSION) {
+    DBG("CLOU", "Abort ignorado: estado %u", (unsigned)state.load());
+    return;
+  }
+  setState(LinkState::CLOSING);
+  logSessionSummary("aborto");
+  deleteSession();
 }
 
 void doDisconnect() {

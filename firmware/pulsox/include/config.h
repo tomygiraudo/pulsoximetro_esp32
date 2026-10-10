@@ -55,6 +55,8 @@
 // ---- Measurement flow ---------------------------------------------------------------
 #define CONNECT_MAX_MS 40000         // longest the cloud may take to connect (WiFi + login + first writes)
 #define FINGER_WAIT_S 30             // connected (or failed) and nobody puts a finger on: back to sleep
+#define RESULT_SHOW_S 120            // the result stays on the screen this long, then deep sleep (the button measures again)
+#define ERROR_SHOW_S 120             // same for the "no finger" screen after a discarded measurement
 
 // What makes a measurement good, finished or invalid (lib/ppg/ppg_session.c, fed once per second
 // from the measurement start). Starting points, tuned against firmware/pulsox/captures.
@@ -79,7 +81,6 @@
 #define WIFI_CONNECT_TIMEOUT_MS 10000  // the whole WiFi association; login and the first writes come after
 #define CLOUD_TASK_STACK 12288         // bytes: the TLS handshake needs well over the 8 KB of the loop task
 #define CLOUD_PPG_FS 50                // samples/s in `live.ppg`: the 100 sps view trace, averaged in pairs
-#define READING_EVERY_S 5              // history reading while SpO2 and BPM are valid
 #define CLOUD_CLOSE_TIMEOUT_MS 10000   // before sleeping: longest wait for the cloud to finish what it is doing
 
 // ---- Runtime ------------------------------------------------------------------
