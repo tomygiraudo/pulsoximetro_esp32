@@ -285,8 +285,8 @@ ESP32 ──HTTPS (REST, con login)──►  Firebase Realtime DB  ◄──RES
   escritura la permite únicamente el `uid` del usuario del dispositivo
   ([`tools/cloud/database.rules.json`](tools/cloud/database.rules.json)).
 - **La medición se inicia solo con el botón del dispositivo**; la app no manda
-  comandos. Por eso el ESP32 puede dormir en deep sleep entre mediciones: no
-  tiene que estar escuchando.
+  comandos. Por eso el ESP32 puede dormir (light sleep o deep sleep) entre
+  mediciones: no tiene que estar escuchando.
 - Se guardan **valores crudos**. El estado (normal / precaución / peligro) lo
   calcula cada cliente con *sus* umbrales.
 - Las horas son del servidor (`{".sv":"timestamp"}`, abreviado `SV` abajo): el
@@ -483,5 +483,6 @@ Armado de los paquetes y decisiones asociadas, a cerrar junto con el firmware:
       integrado con el botón (GPIO0) y el deep sleep en
       [`firmware/pulsox`](firmware/pulsox/README.md) (`src/cloud.cpp`,
       `src/cloud_link.cpp`); sigue [`tools/cloud/fake_device.py`](tools/cloud/fake_device.py).
-      Verificado en la placa en el entorno `dev` (sueño simulado); el deep sleep
-      real depende de la placa del botón (ver el README del firmware).
+      Verificado en la placa, con el light sleep real y con el sueño simulado
+      (entorno `dev`); el deep sleep depende de la placa del botón (ver el README
+      del firmware).

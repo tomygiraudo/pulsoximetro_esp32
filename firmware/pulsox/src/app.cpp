@@ -350,8 +350,8 @@ static void beginFlow() {
   setState(State::CONNECTING);
 }
 
-// Everything quiet, then sleep. With deep sleep it does not return; in the simulated sleep
-// (env dev) it returns when the button is pressed.
+// Everything quiet, then sleep. With deep sleep it does not return; with light sleep and in the
+// simulated one (env dev) it returns when the button is pressed.
 static void enterSleep() {
   DBG("PWR", "a dormir tras %lu s despierto", (unsigned long)((millis() - awakeSince) / 1000));
   if (shutdownSensor()) {
@@ -365,7 +365,8 @@ static void enterSleep() {
   powerSleep();
 }
 
-// Back from the simulated sleep (env dev); with deep sleep, setup() runs this after a reboot.
+// Back from the sleep (light, or the simulated one of env dev); with deep sleep, setup() runs this
+// after the reboot.
 static void wakeUp() {
   beginFlow();
   displayWake();
@@ -485,8 +486,9 @@ void appSetup() {
   cloudLinkBegin();
   vTaskPrioritySet(nullptr, 2);
 
-  if (cold && !bootWindow()) {
-    enterSleep();  // deep sleep: never returns; the simulated one returns on a press
+  if (wake == Wake::TIMER || (cold && !bootWindow())) {
+    // The timer of a stuck button (deep sleep) is not a press: look again. Or a cold boot that nobody pressed.
+    enterSleep();  // deep sleep: never returns; the others return on a press
   }
   wakeUp();
 }

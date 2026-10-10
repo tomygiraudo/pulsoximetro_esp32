@@ -10,13 +10,13 @@ energía).
 
 ## Cómo se usa
 
-El dispositivo **vive dormido** (ESP32 en deep sleep, MAX30102 en shutdown,
+El dispositivo **vive dormido** (ESP32 en light sleep, MAX30102 en shutdown,
 pantalla apagada). **Un botón lo despierta**:
 
 ```
-botón ─► CONECTANDO ─► ESPERA_DEDO ─► MIDIENDO ─┬─► RESULTADO (2 min) ─► deep sleep
+botón ─► CONECTANDO ─► ESPERA_DEDO ─► MIDIENDO ─┬─► RESULTADO (2 min) ─► a dormir
          WiFi + login   "Colocá el dedo"  45-60 s │
-                        30 s sin dedo: dormir     └─► ERROR "Dedo no encontrado" (2 min) ─► deep sleep
+                        30 s sin dedo: dormir     └─► ERROR "Dedo no encontrado" (2 min) ─► a dormir
 ```
 
 - **Conectando**: WiFi y login a Firebase, en una tarea aparte. El sensor todavía
@@ -46,7 +46,7 @@ botón ─► CONECTANDO ─► ESPERA_DEDO ─► MIDIENDO ─┬─► RESULTA
    Bluetooth: indicá el puerto con `--upload-port`):
 
 ```
-pio run -e esp32-c3-supermini -t upload        # el firmware real, con deep sleep
+pio run -e esp32-c3-supermini -t upload        # el firmware real, con light sleep
 pio run -e dev -t upload                        # el mismo, con el sueño simulado
 ```
 
@@ -54,27 +54,37 @@ pio run -e dev -t upload                        # el mismo, con el sueño simula
 
 | Entorno | Para qué |
 |---|---|
-| `esp32-c3-supermini` | **El firmware real.** Deep sleep de verdad: el USB se corta mientras duerme. |
+| `esp32-c3-supermini` | **El firmware real.** Duerme en **light sleep** (`POWER_SLEEP_MODE`): ~130 µA en el chip, la RAM se conserva y despierta en milisegundos. El USB se corta mientras duerme y **no vuelve** al despertar (ver abajo). |
+| `deep-sleep` | Igual, pero en deep sleep (~5 µA en el chip). **Solo despierta si R5 de la placa del botón es de ~3 kΩ o menos** (ver abajo). |
 | `dev` | Igual, pero el "sueño" es simulado: la CPU y el USB siguen, así se ve el log y se puede subir en cualquier momento. Despierta con el botón o con `b` por serie. Loguea cada flanco de GPIO0 e incluye los comandos de prueba (`g`). No sirve para medir consumo. |
 | `dev-offline` | `dev` sin nube: nunca conecta. Prueba el camino "medir sin enviar" sin apagar el router. |
 | `ui-demo` | Recorre las 12 pantallas con datos falsos, sin sensor ni WiFi. |
 
 ### Subir con el chip dormido
 
-En deep sleep el puerto USB desaparece. Tras un RESET (o al conectar la placa) hay
-una **ventana de 5 s** antes de dormir: subí dentro de ella. También sirve
-mantener BOOT (GPIO9), apretar RESET y soltar BOOT.
+Mientras duerme, el puerto USB desaparece, y **en light sleep Windows tampoco lo
+vuelve a reconocer al despertar** (el controlador USB no se re-enumera): no hay log
+por serie hasta el próximo RESET. Para ver el log usá el entorno `dev`. Para subir
+firmware: tras un RESET (o al conectar la placa) hay una **ventana de 5 s** antes de
+dormir, subí dentro de ella. También sirve mantener BOOT (GPIO9), apretar RESET y
+soltar BOOT.
 
 ### La placa del botón
 
 El botón (SW1 → GPIO0, activo en bajo) está en una placa externa, con un pull-up a
-3V3 (R4) y una resistencia en serie (R5) más un capacitor (C7) hacia GPIO0.
-**R5 tiene que ser de 4,7 kΩ o menos.** El SDK de Arduino trae activada
-`CONFIG_ESP_SLEEP_GPIO_ENABLE_INTERNAL_RESISTORS`, que enciende el pull-up interno
-(~45 kΩ) del pin de despertar al entrar en deep sleep y no se puede apagar desde el
-proyecto. Con R5 = 100 kΩ el pin apretado solo baja a ~2,3 V, que se lee como alto,
-y el deep sleep real no despertaría. Con R5 ≤ 4,7 kΩ baja a ~0,3 V. El antirrebote
-lo hace el software (30 ms).
+3V3 (R4) y una resistencia en serie (R5) más un capacitor (C7) hacia GPIO0. El
+antirrebote lo hace el software (30 ms).
+
+- **En light sleep (lo predeterminado) R5 puede ser la de 100 kΩ.** El pin se
+  configura como entrada **sin** pull-up interno, así que al apretar baja a ~0 V.
+  Verificado en la placa con R5 = 100 kΩ, C7 = 100 nF.
+- **En deep sleep, R5 tiene que ser de ~3 kΩ o menos.** El SDK de Arduino trae
+  activada `CONFIG_ESP_SLEEP_GPIO_ENABLE_INTERNAL_RESISTORS`, que enciende el
+  pull-up interno del pin de despertar al entrar en deep sleep y no se puede apagar
+  desde el proyecto. Ese pull-up forma un divisor con R5 y el pin apretado tiene
+  que bajar de 0,825 V (el 25 % de 3,3 V) para leerse como "bajo". Con 100 kΩ solo
+  baja a ~2,8 V (medido) y no despertaría. Dos resistencias de 6,8 kΩ en paralelo
+  sobre R5 darían ~0,5 V. Sin probar en deep sleep real.
 
 ## Pantalla
 
@@ -92,7 +102,7 @@ Los umbrales de alerta son los del diseño: ≥ 96 % normal, 93–95 % precauci�
 |---|---|
 | `src/app.cpp` | La máquina de estados de arriba. `main.cpp` solo llama a `appSetup()` / `appLoop()`. |
 | `src/cloud.cpp`, `src/cloud_link.cpp` | El cliente de Firebase (REST + TLS, de `cloud-test`) y la tarea que lo corre sin frenar el sensor. |
-| `src/power.cpp`, `src/button.cpp` | Deep sleep (retención de pines, wakeup por GPIO0) y el botón. |
+| `src/power.cpp`, `src/button.cpp` | Light sleep / deep sleep (retención de pines, wakeup por GPIO0) y el botón. |
 | `src/display.cpp`, `lib/tft_st7735` | Las pantallas y el controlador. |
 | `lib/max30102` | Driver del sensor (I2C, FIFO). |
 | `lib/ppg` | El procesamiento, en C puro: filtros, SpO₂, pulso, calidad (`ppg_processor`) y el juez de la medición (`ppg_session`). |
@@ -151,5 +161,9 @@ valor crudo muy por debajo del tope (262143), es un glitch del bus.
   fondo es de hardware (cables cortos o trenzados, desacople).
 - Sin medición de batería: la barra de la pantalla muestra un valor fijo
   (`BATTERY_PLACEHOLDER_PCT`) y `info.battery_pct` se omite.
-- El deep sleep real depende de la placa del botón (arriba). Sin R5 corregida, solo
-  funciona el entorno `dev`.
+- **Consumo sin medir.** Los ~130 µA (light sleep) y ~5 µA (deep sleep) son los
+  valores típicos del datasheet del chip; el total depende del resto de la placa
+  (regulador, módulo TFT, LED de la Super Mini). Se mide con el multímetro en serie
+  con la batería.
+- **Sin USB después del primer sueño** (arriba): para depurar, entorno `dev`.
+- No se probó el corte de WiFi a mitad de una medición, ni el deep sleep real.

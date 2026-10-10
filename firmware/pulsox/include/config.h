@@ -36,17 +36,27 @@
 // ---- Button and sleep ------------------------------------------------------------
 // SW1 lives on a separate board (it is not in the KiCad): 10K pull-up to 3V3 and a 10K/1 uF
 // RC debounce to GPIO0, active low. GPIO0 is one of the pins (0-5) that can wake the
-// ESP32-C3 from deep sleep, by level.
+// ESP32-C3 from sleep, by level.
 #define PIN_BUTTON 0
 #define BUTTON_DEBOUNCE_MS 30        // software debounce on top of the RC
-#define BUTTON_RELEASE_WAIT_MS 5000  // before deep sleep: longest wait for a held button to be released
+#define BUTTON_RELEASE_WAIT_MS 5000  // before sleeping: longest wait for a held button to be released
 #ifndef BUTTON_LOG_RAW
 #define BUTTON_LOG_RAW 0             // 1 (env `dev`): log every edge of the raw GPIO0 level, bounces included
 #endif
 #define BUTTON_STUCK_RETRY_S 60      // button still down after that wait: sleep on a timer instead
-                                     // (a GPIO wakeup would fire at once and loop)
-#ifndef POWER_DEEP_SLEEP
-#define POWER_DEEP_SLEEP 1           // 0 (env `dev`): the "sleep" is simulated, CPU and USB stay up
+                                     // (a GPIO wakeup would fire at once and loop), and look again
+// How the device sleeps between measurements (src/power.cpp). All of them wake on GPIO0.
+//   POWER_SLEEP_LIGHT  ~130 uA in the chip. The RAM is kept, so it resumes where it was and wakes in ms.
+//                      Works with the button board as it is: the pin is a plain input (no internal pull-up).
+//   POWER_SLEEP_DEEP   ~5 uA, but the Arduino SDK turns the internal pull-up (~18-45 kOhm) on in the wakeup
+//                      pin and the project cannot turn it off: R5 of the button board has to be ~3 kOhm or
+//                      less, or a press does not pull the pin low enough to wake it (env `deep-sleep`).
+//   POWER_SLEEP_SIM    env `dev`: no sleep at all, the CPU and the USB port stay up.
+#define POWER_SLEEP_SIM 0
+#define POWER_SLEEP_DEEP 1
+#define POWER_SLEEP_LIGHT 2
+#ifndef POWER_SLEEP_MODE
+#define POWER_SLEEP_MODE POWER_SLEEP_LIGHT
 #endif
 #define BOOT_WINDOW_MS 5000          // after a cold boot: time to flash or open the monitor before sleeping
 #define SERIAL_WAIT_ON_WAKE_MS 0     // waking from deep sleep: do not wait for the monitor (USB comes
