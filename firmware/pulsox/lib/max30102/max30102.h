@@ -23,6 +23,7 @@ class Max30102 {
   static constexpr uint8_t ERR_BAD_PART_ID = 0xF1;   // answered, but it is not a MAX30102
   static constexpr uint8_t ERR_RESET_TIMEOUT = 0xF2; // soft reset did not complete
   static constexpr uint8_t ERR_READBACK = 0xF3;      // a register did not keep the value written
+  static constexpr uint8_t ERR_BAD_PTRS = 0xF4;      // FIFO pointers out of range: a corrupted read
 
   // Wire must already be started (Wire.begin) by the caller. Probes the sensor,
   // checks PART_ID and soft-resets it, which also clears LED currents and mode

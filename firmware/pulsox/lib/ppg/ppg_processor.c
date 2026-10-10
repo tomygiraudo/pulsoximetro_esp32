@@ -102,6 +102,15 @@ static void beat_update(PpgProcessor *p, float x, float ir_dc) {
 
 // ---- Output ----------------------------------------------------------------------
 
+// Coefficient of variation of the accepted RR intervals (rr_n > 0).
+static float rr_cv(const PpgBeat *b) {
+  float mean = 0.0f, var = 0.0f;
+  for (int i = 0; i < b->rr_n; i++) mean += b->rr[i];
+  mean /= b->rr_n;
+  for (int i = 0; i < b->rr_n; i++) var += (b->rr[i] - mean) * (b->rr[i] - mean);
+  return sqrtf(var / b->rr_n) / mean;
+}
+
 static void evaluate_heart_rate(PpgProcessor *p) {
   const PpgBeat *b = &p->beat;
   PpgOutput *o = &p->out;
@@ -114,12 +123,30 @@ static void evaluate_heart_rate(PpgProcessor *p) {
   o->bpm = 60.0f / med;
   if (b->rr_n < BPM_VALID_MIN_RR) return;
 
-  float mean = 0.0f, var = 0.0f;
-  for (int i = 0; i < b->rr_n; i++) mean += b->rr[i];
-  mean /= b->rr_n;
-  for (int i = 0; i < b->rr_n; i++) var += (b->rr[i] - mean) * (b->rr[i] - mean);
-  float cv = sqrtf(var / b->rr_n) / mean;
-  o->bpm_valid = cv <= BPM_VALID_MAX_CV;
+  o->bpm_valid = rr_cv(b) <= BPM_VALID_MAX_CV;
+}
+
+// How much the result can be trusted: a strong pulse (perfusion index) that beats regularly.
+// Needs the output of evaluate_spo2() (perfusion index) and the beat history.
+static void evaluate_quality(PpgProcessor *p) {
+  const PpgBeat *b = &p->beat;
+  PpgOutput *o = &p->out;
+  o->quality = 0.0f;
+  if (!o->finger || o->saturated) return;
+
+  float q_pi = o->perfusion_index / QUALITY_PI_GOOD_PCT;
+  if (q_pi > 1.0f) q_pi = 1.0f;
+
+  float q_rr = 0.5f;  // too few beats to judge their regularity yet: neutral
+  if (b->rr_n >= 3) {
+    if ((p->n - b->last_beat_n) > LAST_BEAT_MAX_N) {
+      q_rr = 0.0f;  // the pulse stopped
+    } else {
+      float k = rr_cv(b) / QUALITY_CV_BAD;
+      q_rr = 1.0f - (k > 1.0f ? 1.0f : k);
+    }
+  }
+  o->quality = q_pi * q_rr;
 }
 
 static void evaluate_spo2(PpgProcessor *p) {
@@ -160,6 +187,7 @@ static void evaluate(PpgProcessor *p) {
   p->out.saturated = p->sat_hold > 0;
   evaluate_spo2(p);
   evaluate_heart_rate(p);
+  evaluate_quality(p);
 }
 
 // ---- Finger, reset, sample entry point ----------------------------------------------

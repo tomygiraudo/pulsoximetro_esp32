@@ -14,7 +14,7 @@ extern "C" {
 #endif
 
 #define PPG_CSV_D_HEADER "n,red,ir,red_ac,ir_ac,red_dc,ir_dc,ir_view,beat_thr,beat,finger"
-#define PPG_CSV_R_HEADER "n,finger,spo2,spo2_valid,bpm,bpm_valid,r,pi,saturated"
+#define PPG_CSV_R_HEADER "n,finger,spo2,spo2_valid,bpm,bpm_valid,r,pi,saturated,quality"
 
 // Each writes "D,..." / "R,..." plus '\n' into buf. Returns the length, or a value
 // >= size if it did not fit (as snprintf does).

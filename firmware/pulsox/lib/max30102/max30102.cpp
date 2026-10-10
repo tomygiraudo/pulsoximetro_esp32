@@ -61,6 +61,7 @@ const char *Max30102::errorText(uint8_t err) {
     case ERR_BAD_PART_ID: return "PART_ID incorrecto (no es un MAX30102)";
     case ERR_RESET_TIMEOUT: return "el soft reset no termina";
     case ERR_READBACK: return "el registro no guardo el valor escrito";
+    case ERR_BAD_PTRS: return "punteros del FIFO fuera de rango (lectura corrupta)";
     default: return "desconocido";
   }
 }
@@ -123,10 +124,17 @@ bool Max30102::shutdown() {
 int Max30102::readFifo(PpgSample *buf, size_t max) {
   uint8_t ptrs[3];  // WR_PTR, OVF_COUNTER, RD_PTR
   if (!readBytes(FIFO_WR_PTR, ptrs, 3)) return -1;
+  // All three are 5-bit registers. A bigger value is a corrupted read (0xFF when the sensor
+  // does not drive the bus): counted as it is, it would invent 255 lost samples.
+  if (ptrs[0] > 0x1F || ptrs[1] > 0x1F || ptrs[2] > 0x1F) {
+    lastErr_ = ERR_BAD_PTRS;
+    return -1;
+  }
 
   size_t pending = (ptrs[0] - ptrs[2]) & 0x1F;
   if (ptrs[1] != 0) {
     overflow_ += ptrs[1];
+    writeReg(FIFO_OVF, 0);  // count it once: left set, the same value would be added on every poll
     if (pending == 0) pending = FIFO_DEPTH;  // the FIFO overran and wrapped all the way around
   }
   if (pending > max) pending = max;  // the rest stays in the FIFO for the next call

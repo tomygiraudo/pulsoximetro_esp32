@@ -51,7 +51,23 @@
 #define BOOT_WINDOW_MS 5000          // after a cold boot: time to flash or open the monitor before sleeping
 #define SERIAL_WAIT_ON_WAKE_MS 0     // waking from deep sleep: do not wait for the monitor (USB comes
                                      // back re-enumerated, waiting would only cost battery)
-#define AWAKE_TEST_S 60              // PROVISIONAL (stage 1): awake time after a press before sleeping again
+
+// ---- Measurement flow ---------------------------------------------------------------
+#define CONNECT_MAX_MS 40000         // longest the cloud may take to connect (WiFi + login + first writes)
+#define FINGER_WAIT_S 30             // connected (or failed) and nobody puts a finger on: back to sleep
+#define MEAS_MAX_S 60                // PROVISIONAL (stage 2): fixed length; stage 4 makes it 45 s min / 60 s max
+#define MEAS_FINGER_LOST_S 1         // finger away this long during the measurement: it is discarded
+
+// ---- Cloud (Firebase Realtime Database, PROTOCOL.md "Transporte en la nube") -------------
+// WiFi and Firebase credentials live in include/secrets.h (gitignored, see secrets.h.example).
+#define DB_HOST "pulsoximetro-esp-default-rtdb.firebaseio.com"  // databaseURL without scheme
+#define DEVICE_ID "pulsox-4ba0e4ea46d7"
+#define FW_VERSION "pulsox-0.2.0"
+#define WIFI_CONNECT_TIMEOUT_MS 10000  // the whole WiFi association; login and the first writes come after
+#define CLOUD_TASK_STACK 12288         // bytes: the TLS handshake needs well over the 8 KB of the loop task
+#define CLOUD_PPG_FS 50                // samples/s in `live.ppg`: the 100 sps view trace, averaged in pairs
+#define READING_EVERY_S 5              // history reading while SpO2 and BPM are valid
+#define CLOUD_CLOSE_TIMEOUT_MS 10000   // before sleeping: longest wait for the cloud to finish what it is doing
 
 // ---- Runtime ------------------------------------------------------------------
 #define SERIAL_WAIT_MS 4000          // max wait for the monitor at a cold boot (USB-CDC)
