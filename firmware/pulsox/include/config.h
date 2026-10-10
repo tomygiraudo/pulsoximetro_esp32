@@ -88,7 +88,8 @@
 #define DB_HOST "pulsoximetro-esp-default-rtdb.firebaseio.com"  // databaseURL without scheme
 #define DEVICE_ID "pulsox-4ba0e4ea46d7"
 #define FW_VERSION "pulsox-0.2.0"
-#define WIFI_CONNECT_TIMEOUT_MS 10000  // the whole WiFi association; login and the first writes come after
+#define WIFI_CONNECT_TIMEOUT_MS 10000  // per network: the WiFi association; login and the first writes come after
+#define WIFI_MAX_TOTAL_MS 25000        // with several networks in secrets.h: the longest the whole search may take
 #ifndef CLOUD_FORCE_OFFLINE
 #define CLOUD_FORCE_OFFLINE 0          // 1 (env `dev-offline`): never connects, to test the "measure without sending" path
 #endif
