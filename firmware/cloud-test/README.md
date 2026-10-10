@@ -7,6 +7,13 @@ a la base, para validar el contrato de nube de
 [`PROTOCOL.md`](../../PROTOCOL.md) ("Transporte en la nube") en el hardware real
 antes de integrarlo al firmware `pulsox`.
 
+> **Estado:** el cliente de este sketch (`src/cloud.cpp`) ya está integrado en el
+> firmware real, [`firmware/pulsox`](../pulsox/README.md), junto con el sensor, la
+> pantalla, el botón y el deep sleep (`src/cloud_link.cpp` lo corre en una tarea
+> aparte). Este sketch queda como banco de pruebas del contrato con datos
+> simulados. Una diferencia: el firmware real manda **una sola lectura** por
+> sesión (el resultado), no una cada 5 s como hace este sketch.
+
 El ESP32 es **solo un cliente de la base que escribe telemetría**: no tiene
 servidor WebSocket, no lee nada y no recibe comandos. La web
 (<https://tomygiraudo.github.io/pulsoximetro_esp32/>, fuente "Nube") es el otro

@@ -155,10 +155,11 @@
 //      una rotación distinta de 0, hay que recalibrar.
 //
 //  2.9 Qué todavía no está resuelto
-//    - Light sleep / deep sleep con la pantalla: no probado. La idea es apagar el
-//      backlight con tftBacklight(false) y poner el controlador en reposo con
-//      tftScreen().enableSleep(true) antes de dormir; falta validarlo y medir el
-//      consumo.
+//    - Sueño con la pantalla: resuelto en src/display.cpp (displaySleep / displayWake /
+//      displayHoldPins): backlight apagado, DISPOFF + SLPIN, y en deep sleep los
+//      pines del backlight, CS y RESET retenidos (gpio_hold) para que no floten.
+//      Probado con el sueño simulado del entorno dev; falta medir el consumo en
+//      deep sleep real.
 //    - SPI por encima de 10 MHz durante el dibujado: no probado.
 //
 // =============================================================================

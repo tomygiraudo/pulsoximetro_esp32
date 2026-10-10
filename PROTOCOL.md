@@ -304,7 +304,7 @@ ESP32 ──HTTPS (REST, con login)──►  Firebase Realtime DB  ◄──RES
               fs, ppg:"112,340,…" }
   sessions/<sid>  { startedAt, endedAt, readings/<pushKey> { ts, spo2, bpm, quality } }
                                                                           sid = push key (orden cronológico);
-                                                                          readings: POST cada ~5 s con lectura válida
+                                                                          readings: UNA sola, el resultado, al terminar
 ```
 
 `<deviceId>` es la "llave" de la URL de lectura (`web/js/cloud-config.js` y
@@ -318,13 +318,13 @@ ESP32 ──HTTPS (REST, con login)──►  Firebase Realtime DB  ◄──RES
 | `session_id` | string | Push key de la sesión (`sessions/<sid>`). |
 | `seq` | integer | Contador de la medición (1, 2, 3…). Cada `seq` nuevo es un "tick" para la web. |
 | `ts` | number | `SV`. |
-| `elapsed_ms` | integer | Milisegundos desde que se presionó el botón, medidos por el dispositivo. La web calcula con esto el inicio de la medición (quien entra a mitad ve el cronómetro correcto sin fiarse de relojes). |
+| `elapsed_ms` | integer | Milisegundos desde que **empezó la medición** (dedo detectado y conexión resuelta; no desde que se apretó el botón: antes hay unos segundos de conexión), medidos por el dispositivo. La web calcula con esto el inicio de la medición (quien entra a mitad ve el cronómetro correcto sin fiarse de relojes). |
 | `finger_detected` | boolean | Igual que en `telemetry`. |
 | `spo2`, `bpm` | number | Solo si hay dedo; ver `telemetry`. |
 | `spo2_valid`, `bpm_valid` | boolean | Igual que en `telemetry`. |
 | `signal_quality` | number | 0.0–1.0. |
 | `battery_pct` | integer | Se omite si no se mide. |
-| `fs` | integer | Frecuencia de muestreo del PPG en Hz. |
+| `fs` | integer | Frecuencia de muestreo del PPG en Hz. El firmware manda 50 (la señal de 100 sps, promediada de a dos). |
 | `ppg` | string | `fs` muestras enteras (1 s de señal) separadas por comas, ya filtradas, pico sistólico hacia arriba. Se omite sin dedo. Una hoja atómica (~250 B a 50 Hz) en vez de un arreglo, y un solo request por segundo con la telemetría incluida. |
 
 **`info`**: `device_id`, `fw_version`, `sensor` (strings, como en `hello`),
@@ -332,8 +332,14 @@ ESP32 ──HTTPS (REST, con login)──►  Firebase Realtime DB  ◄──RES
 reposo") y `updated` (`SV`).
 
 **`sessions/<sid>`**: `startedAt` (`SV`, lo escribe el `POST` que abre la
-medición), `endedAt` (`SV`, al terminar) y `readings/<pushKey>` con
-`{ ts (SV), spo2, bpm, quality }` cada ~5 s mientras haya lectura válida.
+medición), `endedAt` (`SV`, al terminar) y **una sola** lectura,
+`readings/<pushKey>` con `{ ts (SV), spo2, bpm, quality }`: el resultado de la
+medición (la mediana de los segundos estables de los últimos 20 s). El historial
+no lleva las lecturas intermedias: vienen de un filtro que todavía se está
+asentando (la primera suele dar valores bajos) y no sirven como registro; lo que
+se ve evolucionar en vivo es `live`. Una sesión sin lectura es una fila vacía en
+el historial, así que si la lectura final no se puede escribir la sesión se
+borra (ver "Medición descartada").
 
 ### Llamadas REST del dispositivo
 
@@ -350,10 +356,11 @@ escrituras que no necesitan respuesta llevan `&print=silent` (la base contesta
 | 4 | Al arrancar | `DELETE <db>/devices/<id>/live.json?auth=<auth>` | — | — |
 | 5 | Botón de medición | `POST <db>/devices/<id>/sessions.json?auth=<auth>` | `{"startedAt": SV}` | `{"name": "<sid>"}` |
 | 6 | Cada segundo | `PUT <db>/devices/<id>/live.json?auth=<auth>` | `live` completo | — |
-| 7 | Cada ~5 s (lectura válida) | `POST <db>/devices/<id>/sessions/<sid>/readings.json?auth=<auth>` | `{"ts": SV, "spo2", "bpm", "quality"}` | `{"name": …}` |
+| 7 | Al terminar (medición válida) | `POST <db>/devices/<id>/sessions/<sid>/readings.json?auth=<auth>` | `{"ts": SV, "spo2", "bpm", "quality"}` | `{"name": …}` |
 | 8 | Al terminar | `PATCH <db>/devices/<id>/sessions/<sid>.json?auth=<auth>` | `{"endedAt": SV}` | — |
-| 9 | Al terminar | `PATCH <db>/devices/<id>/info.json?auth=<auth>` | `{"battery_pct", "updated": SV}` | — |
+| 9 | Al terminar | `PATCH <db>/devices/<id>/info.json?auth=<auth>` | `{"battery_pct", "updated": SV}` (el firmware actual no mide batería: solo `updated`) | — |
 | 10 | Al terminar | `DELETE <db>/devices/<id>/live.json?auth=<auth>` | — | — |
+| 11 | Medición descartada | `DELETE <db>/devices/<id>/sessions/<sid>.json?auth=<auth>` y después la 10 | — | — |
 
 Notas para el firmware (la especificación ejecutable es
 [`tools/cloud/fake_device.py`](tools/cloud/fake_device.py)):
@@ -370,8 +377,15 @@ Notas para el firmware (la especificación ejecutable es
   (`.validate`, escritura de otro usuario): la API REST responde `401
   Permission denied` ante cualquier violación de reglas.
 - **Fallos de red.** Un tick que no se pudo escribir se descarta (el siguiente
-  llega en 1 s); no acumular una cola. El historial se arma con las lecturas de
-  la llamada 7, que no necesitan 1 Hz.
+  llega en 1 s); no acumular una cola. El historial se arma con la lectura
+  final (llamada 7), que no necesita 1 Hz: se reintenta 3 veces porque sin ella
+  la sesión queda vacía.
+- **Medición descartada** (dedo retirado, señal errática, lecturas
+  insuficientes, sensor saturado): llamadas 11 y 10, en ese orden. No queda nada
+  de esa medición en el historial y los visores ven `live` desaparecer como en
+  una medición normal.
+- **Sin nube** (sin WiFi, login rechazado): el dispositivo mide igual y muestra
+  el resultado como "NO ENVIADO"; no guarda nada para mandar después.
 - **Arranque y deep sleep.** Al arrancar: llamadas 3 y 4 (4 limpia el `live` que
   deja un corte de energía a mitad de medición). Antes de dormir, la medición
   tiene que estar cerrada (8–10).
@@ -452,9 +466,12 @@ Armado de los paquetes y decisiones asociadas, a cerrar junto con el firmware:
 - [ ] **`measurement_end`**: ¿existe como paquete?, ¿lo manda el firmware al
       soltar el botón / por duración máxima / por inactividad?, ¿con motivo y
       resumen?
-- [ ] **Botón presionado durante una medición**: ¿la detiene o la reinicia?
-- [ ] **Sin dedo**: confirmar que durante `finger_detected: false` el firmware
-      no envía `ppg` (hoy la app lo ignora después de la primera `telemetry`).
+- [x] **Botón presionado durante una medición**: se **ignora**; una medición
+      siempre termina antes de poder empezar otra. Con el resultado (o el error)
+      en pantalla, el botón empieza una medición nueva.
+- [x] **Sin dedo**: durante `finger_detected: false` el firmware omite `ppg`,
+      `spo2` y `bpm` del `live`. Un dedo retirado, además, descarta la medición
+      (llamadas 11 y 10).
 - [ ] **Reconexión a mitad de medición**: ¿`hello` informa si hay una medición
       en curso (y hace cuánto empezó) para no depender de la medición
       implícita?
@@ -462,6 +479,9 @@ Armado de los paquetes y decisiones asociadas, a cerrar junto con el firmware:
       `telemetry`; ¿se agrega a `hello`/`measurement_start` para mostrarla en
       reposo? (En la nube ya está resuelto: `info.battery_pct`, que la web
       entrega como `hello.battery_pct`; la app lo acepta en cualquier `hello`.)
-- [ ] **Cliente del ESP32 para la nube** (plan aparte): WiFi STA + TLS + login +
-      keep-alive, y su integración con deep sleep y el botón (GPIO0); sigue
-      [`tools/cloud/fake_device.py`](tools/cloud/fake_device.py).
+- [x] **Cliente del ESP32 para la nube**: WiFi STA + TLS + login + keep-alive,
+      integrado con el botón (GPIO0) y el deep sleep en
+      [`firmware/pulsox`](firmware/pulsox/README.md) (`src/cloud.cpp`,
+      `src/cloud_link.cpp`); sigue [`tools/cloud/fake_device.py`](tools/cloud/fake_device.py).
+      Verificado en la placa en el entorno `dev` (sueño simulado); el deep sleep
+      real depende de la placa del botón (ver el README del firmware).
