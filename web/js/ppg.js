@@ -13,6 +13,9 @@
 // transport a batch is a whole second of signal, so the delay has to cover it
 // (PPG_RENDER_DELAY_CLOUD_MS, see setRenderDelay()).
 //
+// When the measurement ends the app freezes the trace (freeze()) so the final
+// window stays readable for a while instead of scrolling off to the left.
+//
 // Colors are literal strings (canvas does not resolve CSS var()); the caller
 // passes them via getColors() and calls redraw() after a theme change.
 // Depends on withAlpha() from charts.js.
@@ -37,6 +40,7 @@ class PpgTrace {
     this._nextT = null; // sample-clock time of the next sample to arrive
     this._fs = 50;
     this._renderDelay = PPG_RENDER_DELAY_MS;
+    this._frozenT = null; // sample-clock time the window is pinned to once the measurement is over
     this._lo = -1; // smoothed vertical range
     this._hi = 1;
     this._raf = null;
@@ -77,9 +81,18 @@ class PpgTrace {
     this._renderDelay = ms;
   }
 
+  /** Stops the window from sliding: the last PPG_WINDOW_SECONDS stay on screen
+   * as they were when the signal ended, until clear(). */
+  freeze() {
+    const last = this._samples[this._samples.length - 1];
+    this._frozenT = last ? last.t : null;
+    this.redraw();
+  }
+
   clear() {
     this._samples = [];
     this._nextT = null;
+    this._frozenT = null;
     this._lo = -1;
     this._hi = 1;
     this.redraw();
@@ -130,7 +143,8 @@ class PpgTrace {
     const plotBottom = H - 18; // leave room for the time labels
     const plotH = plotBottom - plotTop;
     const windowMs = PPG_WINDOW_SECONDS * 1000;
-    const renderT = performance.now() - this._renderDelay;
+    const frozen = this._frozenT !== null;
+    const renderT = frozen ? this._frozenT : performance.now() - this._renderDelay;
 
     ctx.clearRect(0, 0, W, H);
     ctx.font = '600 11px Figtree, system-ui, sans-serif';
@@ -159,7 +173,7 @@ class PpgTrace {
     ctx.textAlign = "left";
     ctx.fillText(`−${PPG_WINDOW_SECONDS} s`, 0, H - 4);
     ctx.textAlign = "right";
-    ctx.fillText("ahora", W, H - 4);
+    ctx.fillText(frozen ? "fin" : "ahora", W, H - 4);
 
     // visible samples
     const tMin = renderT - windowMs;

@@ -6,7 +6,10 @@ Detalles:
 
 - **Ciclo de medición:** el dashboard espera en "Listo para medir" hasta que el
   ESP32 manda el paquete de inicio (se presionó el botón de medición); recién
-  entonces aparecen las lecturas, el cronómetro y la traza PPG.
+  entonces aparecen las lecturas, el cronómetro y la traza PPG. Al terminar la
+  medición el dashboard deja 2 minutos el resultado final (SpO₂, BPM y la señal)
+  antes de volver a "Listo para medir"; si se empieza otra medición antes, la
+  reemplaza.
 - **Firmware** El firmware se encuentra en firmware/pulsox, tiene integrado todo lo hecho en los distintos tests de las otras carpetas.
 - **Credenciales** Para que el pulsoxímetro se conecte a la aplicación y a la base de datos, se debe clonar el codigo de la base de datos y alojarlo en un proyecto firebase local. Por ultimo crear un archivo .env con las credenciales de la red wifi y las API's correspondientes para establecer la conexión con la base de datos.
 
