@@ -4,8 +4,10 @@
 
 static void ledSet(bool on) { digitalWrite(PIN_LED, on ? LED_ON_LEVEL : !LED_ON_LEVEL); }
 
-void statusLedBegin() {
+void statusLedBegin(bool bootBlinks) {
   pinMode(PIN_LED, OUTPUT);
+  ledSet(false);
+  if (!bootBlinks) return;
   for (uint8_t i = 0; i < 3; i++) {
     ledSet(true);
     delay(80);
@@ -22,3 +24,5 @@ void statusLedUpdate(bool streaming) {
   on = !on;
   ledSet(on);
 }
+
+void statusLedOff() { ledSet(false); }

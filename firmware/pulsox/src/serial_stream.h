@@ -4,6 +4,7 @@
 //        result of the pipeline), "E," lines for events. Starts with "# D,..." /
 //        "# R,..." / "# E,..." header lines naming the columns, which is what
 //        tools/capture.py records. The D and R formats live in lib/ppg/ppg_csv.h.
+//   'b'  presses the button (buttonInject), to test the wake / start flow without the hardware
 // Data lines start with 'D,' / 'R,' / 'E,' and log lines with '[', so a parser can
 // tell them apart without any framing.
 #pragma once

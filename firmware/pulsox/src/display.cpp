@@ -18,6 +18,7 @@
 #if !defined(DISPLAY_PPG_INPUT_HZ) && defined(SENSOR_FS_HZ)
 #define DISPLAY_PPG_INPUT_HZ SENSOR_FS_HZ
 #endif
+#include <driver/gpio.h>
 #include "display.h"
 #include "display_assets.h"
 #include "tft_st7735.h"
@@ -116,6 +117,8 @@ int ppgCount = 0;
 float scaleLo = 0.0f, scaleHi = 0.0f;
 bool scaleValid = false;
 uint32_t plotMs = 0;
+
+bool asleep = false;           // panel in sleep-in, backlight off (displaySleep)
 
 uint32_t alarmT0 = 0;
 int8_t alarmOn = -1;           // blink state on screen, -1 = unknown
@@ -643,6 +646,7 @@ bool displayBegin() {
   tftBegin();
   displaySetNoFinger();
   flushDirty();
+  tftBacklight(true);  // tftBegin() leaves it off (TFT_BL_ON_AT_BEGIN 0): light up with something drawn
   return true;
 }
 
@@ -704,8 +708,44 @@ void displayPushPpg(float sample) {
   }
 }
 
+void displaySleep() {
+  if (!fb || asleep) return;
+  asleep = true;
+  tftBacklight(false);
+  TftPanel &tft = tftScreen();
+  tft.enableDisplay(false);  // DISPOFF
+  tft.enableSleep(true);     // SLPIN
+}
+
+void displayWake() {
+  if (!fb || !asleep) return;
+  TftPanel &tft = tftScreen();
+  tft.enableSleep(false);  // SLPOUT: the controller needs 120 ms before the next command
+  delay(120);
+  tft.enableDisplay(true);
+  asleep = false;
+  markDirty(0, 0, W, H);
+  flushDirty();
+  tftBacklight(true);
+}
+
+void displayHoldPins(bool hold) {
+  const gpio_num_t pins[] = {(gpio_num_t)PIN_BL_TFT, (gpio_num_t)PIN_CS_TFT, (gpio_num_t)PIN_RST_TFT};
+  if (hold) {
+    pinMode(PIN_BL_TFT, OUTPUT);
+    pinMode(PIN_CS_TFT, OUTPUT);
+    pinMode(PIN_RST_TFT, OUTPUT);
+    digitalWrite(PIN_BL_TFT, !TFT_BL_ON);
+    digitalWrite(PIN_CS_TFT, HIGH);
+    digitalWrite(PIN_RST_TFT, HIGH);
+    for (gpio_num_t p : pins) gpio_hold_en(p);
+  } else {
+    for (gpio_num_t p : pins) gpio_hold_dis(p);
+  }
+}
+
 void displayUpdate() {
-  if (!fb) return;
+  if (!fb || asleep) return;
   const uint32_t now = millis();
   if (scene == Scene::MEASURING) {
     updateHeart(now, false);

@@ -1,5 +1,6 @@
 #include "serial_stream.h"
 #include <Arduino.h>
+#include "button.h"
 #include "debug_log.h"
 #include "ppg_csv.h"
 
@@ -32,6 +33,10 @@ void streamPollCommands() {
       case 's':
         mode = StreamMode::SUMMARY;
         DBG("CMD", "modo resumen");
+        break;
+      case 'b':
+        buttonInject();
+        DBG("CMD", "boton simulado");
         break;
       default:  // CR / LF / anything else: ignored
         break;

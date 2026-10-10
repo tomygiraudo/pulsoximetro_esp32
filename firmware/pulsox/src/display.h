@@ -64,3 +64,15 @@ void displayPushPpg(float sample);
 // Runs the animations (heart, trace, blinking border) and sends what changed to the
 // panel. Call on every loop() pass.
 void displayUpdate();
+
+// Low power. displaySleep() turns the backlight off and puts the controller in display-off
+// + sleep-in; the frame buffer is kept. displayWake() brings the controller back, redraws
+// the whole screen and only then turns the backlight on. While asleep displayUpdate() does
+// nothing. Both are no-ops when the panel is not up.
+void displaySleep();
+void displayWake();
+
+// Freezes (hold = true) or releases the lines that must keep their level in deep sleep:
+// backlight off, CS and RESET high, so the panel stays asleep and dark. Release them first
+// thing after waking, before displayBegin() touches the pins.
+void displayHoldPins(bool hold);

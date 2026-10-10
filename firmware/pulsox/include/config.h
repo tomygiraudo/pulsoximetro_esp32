@@ -24,14 +24,37 @@
 #define TFT_ROTATION 2
 #define TFT_X_ADJUST -2
 #define TFT_Y_ADJUST -1
+// The backlight stays off while the panel is initialised and comes on with the first frame
+// (display.cpp), so waking up does not flash the controller's random RAM.
+#define TFT_BL_ON_AT_BEGIN 0
 
 // ---- Status bar ---------------------------------------------------------------
 // There is no battery measurement yet, and WiFi is not used: the bar shows this
 // fixed battery level (a placeholder, NOT a reading) and the WiFi icon in grey.
 #define BATTERY_PLACEHOLDER_PCT 100
 
+// ---- Button and sleep ------------------------------------------------------------
+// SW1 lives on a separate board (it is not in the KiCad): 10K pull-up to 3V3 and a 10K/1 uF
+// RC debounce to GPIO0, active low. GPIO0 is one of the pins (0-5) that can wake the
+// ESP32-C3 from deep sleep, by level.
+#define PIN_BUTTON 0
+#define BUTTON_DEBOUNCE_MS 30        // software debounce on top of the RC
+#define BUTTON_RELEASE_WAIT_MS 5000  // before deep sleep: longest wait for a held button to be released
+#ifndef BUTTON_LOG_RAW
+#define BUTTON_LOG_RAW 0             // 1 (env `dev`): log every edge of the raw GPIO0 level, bounces included
+#endif
+#define BUTTON_STUCK_RETRY_S 60      // button still down after that wait: sleep on a timer instead
+                                     // (a GPIO wakeup would fire at once and loop)
+#ifndef POWER_DEEP_SLEEP
+#define POWER_DEEP_SLEEP 1           // 0 (env `dev`): the "sleep" is simulated, CPU and USB stay up
+#endif
+#define BOOT_WINDOW_MS 5000          // after a cold boot: time to flash or open the monitor before sleeping
+#define SERIAL_WAIT_ON_WAKE_MS 0     // waking from deep sleep: do not wait for the monitor (USB comes
+                                     // back re-enumerated, waiting would only cost battery)
+#define AWAKE_TEST_S 60              // PROVISIONAL (stage 1): awake time after a press before sleeping again
+
 // ---- Runtime ------------------------------------------------------------------
-#define SERIAL_WAIT_MS 4000          // max wait for the monitor at boot (USB-CDC)
+#define SERIAL_WAIT_MS 4000          // max wait for the monitor at a cold boot (USB-CDC)
 #define SERIAL_TX_TIMEOUT_MS 5       // longest a Serial write may wait for the host; never 0 (see serial_stream.cpp)
 #define SENSOR_RETRY_MS 2000         // how often to retry while the sensor is missing
 #define I2C_FAILS_BEFORE_LOST 10     // consecutive failed polls before declaring the sensor lost

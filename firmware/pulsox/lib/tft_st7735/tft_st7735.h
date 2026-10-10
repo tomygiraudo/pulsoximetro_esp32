@@ -200,6 +200,11 @@
 #ifndef TFT_BL_ON
 #define TFT_BL_ON HIGH  // Nivel que ENCIENDE el backlight (HIGH = activo en alto).
 #endif
+#ifndef TFT_BL_ON_AT_BEGIN
+#define TFT_BL_ON_AT_BEGIN 1  // 1: tftBegin() enciende el backlight al empezar (secuencia validada).
+                              // 0: lo deja apagado; quien llama lo enciende con tftBacklight(true)
+                              // cuando ya dibujó algo (evita el destello de la RAM del controlador).
+#endif
 
 // ---- Pantalla ---------------------------------------------------------------
 
@@ -274,12 +279,13 @@ inline TftPanel &tftScreen() {
 }
 
 // Inicializa la pantalla con la secuencia validada en la placa. Llamar UNA vez,
-// desde setup(). Deja la pantalla en negro y el backlight encendido.
+// desde setup(). Deja la pantalla en negro y el backlight encendido (o apagado si
+// TFT_BL_ON_AT_BEGIN es 0).
 // Secuencia: backlight -> SPI -> initR (a 32 MHz) -> baja a 10 MHz -> rotación ->
 // calibración del origen -> pantalla en negro.
 inline void tftBegin() {
   pinMode(PIN_BL_TFT, OUTPUT);                  // El pin del backlight es una salida.
-  digitalWrite(PIN_BL_TFT, TFT_BL_ON);          // Enciende el backlight.
+  digitalWrite(PIN_BL_TFT, TFT_BL_ON_AT_BEGIN ? TFT_BL_ON : !TFT_BL_ON);  // Backlight al empezar.
   SPI.begin(PIN_SCK_TFT, -1, PIN_SDA_TFT, -1);  // Sin MISO ni CS por hardware. El aviso
                                                 // "SPI Does not have default pins" es inofensivo.
   TftPanel &pantalla = tftScreen();             // La pantalla a inicializar.
