@@ -70,6 +70,10 @@ class Recorder:
     def feed(self, line: str) -> None:
         if len(line) >= 4 and line[:2] == "# " and line[2] in KINDS and line[3] == ",":
             self.headers[line[2]] = line[4:]
+            if line[2] == "D":
+                cols = line[4:].split(",")
+                self.n_idx = cols.index("n")
+                self.ir_idx = cols.index("ir") if "ir" in cols else None
         elif len(line) >= 2 and line[0] in KINDS and line[1] == ",":
             self._row(line[0], line[2:])
 
@@ -80,10 +84,13 @@ class Recorder:
         if row.count(",") != header.count(","):
             self.bad_lines += 1  # truncated line (dropped bytes)
             return
-        values: list[int] = []
+        values: list[str] = []
         if kind == "D":
-            try:
-                values = [int(v) for v in row.split(",")]
+            values = row.split(",")
+            try:  # only n and ir are read here: the filtered columns are decimals
+                int(values[self.n_idx])
+                if self.ir_idx is not None:
+                    int(values[self.ir_idx])
             except ValueError:
                 self.bad_lines += 1
                 return
@@ -92,17 +99,13 @@ class Recorder:
             path = self.base.with_name(self.base.name + KINDS[kind] + ".csv")
             self.files[kind] = open(path, "w", encoding="utf-8", newline="\n")
             self.files[kind].write(header + "\n")
-            if kind == "D":
-                cols = header.split(",")
-                self.n_idx = cols.index("n")
-                self.ir_idx = cols.index("ir") if "ir" in cols else None
         self.files[kind].write(row + "\n")
         self.rows[kind] += 1
         if kind == "D":
             self._track_samples(values)
 
-    def _track_samples(self, values: list[int]) -> None:
-        n = values[self.n_idx]
+    def _track_samples(self, values: list[str]) -> None:
+        n = int(values[self.n_idx])
         if self.prev_n is not None:
             if n <= self.prev_n:
                 self.resets += 1  # the index went back: the sensor was restarted
@@ -110,7 +113,7 @@ class Recorder:
                 self.lost += n - self.prev_n - 1
         self.prev_n = n
         if self.ir_idx is not None:
-            ir = values[self.ir_idx]
+            ir = int(values[self.ir_idx])
             self.ir_min = ir if self.ir_min is None else min(self.ir_min, ir)
             self.ir_max = ir if self.ir_max is None else max(self.ir_max, ir)
 

@@ -25,8 +25,14 @@
 #define TFT_X_ADJUST -2
 #define TFT_Y_ADJUST -1
 
+// ---- Status bar ---------------------------------------------------------------
+// There is no battery measurement yet, and WiFi is not used: the bar shows this
+// fixed battery level (a placeholder, NOT a reading) and the WiFi icon in grey.
+#define BATTERY_PLACEHOLDER_PCT 100
+
 // ---- Runtime ------------------------------------------------------------------
 #define SERIAL_WAIT_MS 4000          // max wait for the monitor at boot (USB-CDC)
+#define SERIAL_TX_TIMEOUT_MS 5       // longest a Serial write may wait for the host; never 0 (see serial_stream.cpp)
 #define SENSOR_RETRY_MS 2000         // how often to retry while the sensor is missing
 #define I2C_FAILS_BEFORE_LOST 10     // consecutive failed polls before declaring the sensor lost
 #define STATS_PERIOD_MS 1000         // period of the summary line
@@ -52,32 +58,48 @@
 #define SETTLE_S 2.0f              // after the finger appears: let the filters settle, no beats
 
 // ---- Filtering -----------------------------------------------------------------
-#define DC_TAU_S 1.0f              // EMA time constant of the DC estimate
-#define BAND_HP_HZ 0.5f            // 2nd order Butterworth high-pass
-#define BAND_LP_HZ 5.0f            // 2nd order Butterworth low-pass
+// The same Butterworth filters as tools/procesamiento.py, run in a single pass
+// (the script uses filtfilt, which needs the whole recording). The device does not
+// compute their coefficients: tools/gen_ppg_coefs.py reads these four values and
+// the sample rate above, and writes lib/ppg/ppg_coefs.h. Run it again after
+// changing any of them.
+#define FILTER_ORDER 4             // order of each filter (the band-pass has twice the poles)
+#define BAND_LOW_HZ 0.5f           // band-pass for the AC component
+#define BAND_HIGH_HZ 4.0f
+#define DC_CUTOFF_HZ 0.2f          // low-pass for the DC component
+
+// A second, gentler band-pass only to DRAW the pulse on the TFT. The 0.5-4 Hz filter above
+// is meant for measuring (RMS amplitude) and is too narrow to show the waveform: the
+// dicrotic notch lives between 4 and 10 Hz. SpO2 and heart rate do not use this one.
+#define VIEW_FILTER_ORDER 2
+#define VIEW_BAND_LOW_HZ 0.5f
+#define VIEW_BAND_HIGH_HZ 10.0f
 
 // ---- Beat detection --------------------------------------------------------------
 #define BEAT_ENV_TAU_S 2.0f        // decay of the peak envelope
 #define BEAT_THRESHOLD_K 0.5f      // threshold = K * envelope
+#define BEAT_MIN_AMP_PCT 0.01f     // ... but never below this % of the IR DC (rejects noise)
 #define BEAT_REFRACTORY_S 0.3f
 
 // ---- Heart rate -------------------------------------------------------------------
 #define RR_MIN_S 0.3f              // 200 bpm
 #define RR_MAX_S 2.0f              // 30 bpm
 #define RR_MAX_DEVIATION 0.30f     // reject an RR this far from the current median
-#define BPM_MEDIAN_N 5
+#define RR_MAX_REJECTS 3           // this many rejected RRs in a row: forget the history and start over
+#define BPM_MEDIAN_N 5             // RRs kept; BPM = 60 / their median
 #define BPM_VALID_MIN_RR 5
 #define BPM_VALID_MAX_CV 0.15f
 
 // ---- SpO2 ----------------------------------------------------------------------------
-// SpO2 = A*R^2 + B*R + C, coefficients from the Maxim reference algorithm.
+// R = (AC_red / DC_red) / (AC_ir / DC_ir), with AC the RMS of the band-passed signal
+// and DC the mean of the low-passed one, both over the last SPO2_WINDOW_S seconds.
+// SpO2 = spo2_table[round(R * 100)] (lib/ppg/spo2_table.h, Maxim reference table).
 // UNCALIBRATED for this sensor/housing: values are indicative only.
-#define SPO2_COEF_A -45.060f
-#define SPO2_COEF_B 30.354f
-#define SPO2_COEF_C 94.845f
-#define SPO2_R_MEDIAN_N 8
-#define SPO2_VALID_MIN_R 5
-#define SPO2_VALID_MAX_SPREAD 0.10f
+#define SPO2_WINDOW_S 10           // whole seconds; the result is refreshed once per second.
+                                   // Longer = steadier R but slower to follow a real change
+                                   // (about this many seconds) and 1.6 KB of RAM per second.
+#define SPO2_MIN_PI_PCT 0.02f      // AC RMS / DC (%) below this: no pulse to measure, SpO2 invalid
+#define SPO2_MIN_VALID 80          // % : a reading below this is reported as not valid
 
 // ---- Signal quality ---------------------------------------------------------------------
 #define QUALITY_PI_GOOD_PCT 1.0f   // perfusion index (AC/DC, %) that counts as a good signal
