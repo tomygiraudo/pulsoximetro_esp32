@@ -55,8 +55,21 @@
 // ---- Measurement flow ---------------------------------------------------------------
 #define CONNECT_MAX_MS 40000         // longest the cloud may take to connect (WiFi + login + first writes)
 #define FINGER_WAIT_S 30             // connected (or failed) and nobody puts a finger on: back to sleep
-#define MEAS_MAX_S 60                // PROVISIONAL (stage 2): fixed length; stage 4 makes it 45 s min / 60 s max
-#define MEAS_FINGER_LOST_S 1         // finger away this long during the measurement: it is discarded
+
+// What makes a measurement good, finished or invalid (lib/ppg/ppg_session.c, fed once per second
+// from the measurement start). Starting points, tuned against firmware/pulsox/captures.
+#define MEAS_MIN_S 45                // earliest end of a good measurement
+#define MEAS_MAX_S 60                // latest end: not enough valid seconds by then, it is discarded
+#define MEAS_MIN_VALID_S 15          // valid seconds needed (after the warm-up) to finish
+#define MEAS_WARMUP_S 20             // the first seconds do not count: the filters and the 10 s window fill up
+#define MEAS_RESULT_WINDOW_S 20      // the result is the median of the valid seconds of the last ones
+#define MEAS_RESULT_MIN_N 5          // ... and there must be at least this many in that window
+#define MEAS_QUALITY_MIN 0.10f       // a second with SpO2 and BPM valid still counts as bad below this quality
+#define MEAS_FINGER_LOST_S 1         // finger away this many seconds in a row: discarded
+#define MEAS_INVALID_MAX_S 15        // this many bad seconds in a row: "erratic signal", discarded (a third of the
+                                     // measurement). Even a 1 s clip to full scale makes ~15: SpO2 is not valid
+                                     // while it is in the 10 s window and the filters take a few seconds to recover
+#define MEAS_SATURATED_MAX_S 15      // saturated this many seconds in a row: the sensor is clipping
 
 // ---- Cloud (Firebase Realtime Database, PROTOCOL.md "Transporte en la nube") -------------
 // WiFi and Firebase credentials live in include/secrets.h (gitignored, see secrets.h.example).
@@ -141,5 +154,8 @@
 #define SPO2_MIN_VALID 80          // % : a reading below this is reported as not valid
 
 // ---- Signal quality ---------------------------------------------------------------------
-#define QUALITY_PI_GOOD_PCT 1.0f   // perfusion index (AC/DC, %) that counts as a good signal
+#define QUALITY_PI_GOOD_PCT 0.3f   // perfusion index (AC/DC, %) that counts as a good signal: the median of
+                                   // the good captures is 0.14-0.40 % at ~7 mA
+#define QUALITY_PI_MAX_PCT 2.0f    // ... and above this there is far more AC than a pulse has (motion or
+                                   // noise: +-10 % random noise reads 1.5-3 %): the quality is 0
 #define QUALITY_CV_BAD 0.30f       // RR coefficient of variation that drives the score to 0

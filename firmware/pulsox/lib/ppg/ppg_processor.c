@@ -136,6 +136,7 @@ static void evaluate_quality(PpgProcessor *p) {
 
   float q_pi = o->perfusion_index / QUALITY_PI_GOOD_PCT;
   if (q_pi > 1.0f) q_pi = 1.0f;
+  if (o->perfusion_index > QUALITY_PI_MAX_PCT) q_pi = 0.0f;  // far more AC than a pulse: motion or noise
 
   float q_rr = 0.5f;  // too few beats to judge their regularity yet: neutral
   if (b->rr_n >= 3) {
