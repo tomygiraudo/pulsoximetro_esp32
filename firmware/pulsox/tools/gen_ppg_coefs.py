@@ -2,7 +2,7 @@
 """Generates lib/ppg/ppg_coefs.h: the Butterworth filters of the PPG pipeline.
 
 The firmware runs the same filters as tools/procesamiento.py (scipy.signal.butter):
-a band-pass for the AC component and a low-pass for the DC component, plus a wider
+a band-pass for the AC component and a low-pass for the DC component, plus a second
 band-pass used only to draw the pulse on the screen. The device does not design them:
 this script does, with scipy, and writes the second-order sections as constants. The
 design parameters are read from include/config.h (SENSOR_FS_HZ, FILTER_ORDER,
