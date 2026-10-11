@@ -11,12 +11,12 @@
 //   3. AC^2 and DC go into a sliding window of SPO2_WINDOW_S seconds.
 //   4. Beat detector on the IR AC: adaptive threshold, refractory period, RR
 //      intervals.
-//   5. A separate, wider band-pass on the IR (ir_view in PpgDebug), only to draw the
-//      pulse: the measuring filter is too narrow to show the dicrotic notch.
+//   5. A separate band-pass on the IR (ir_view in PpgDebug), only to draw the pulse. Its
+//      band and order (VIEW_* in config.h) are set apart from those of the measuring filter.
 // Once per second (when ppg_push returns true) the output is refreshed:
 //   R     = (RMS(AC_red) / mean(DC_red)) / (RMS(AC_ir) / mean(DC_ir))
 //   SpO2  = SPO2_TABLE[round(R * 100)]
-//   BPM   = 60 / median of the last BPM_MEDIAN_N RR intervals
+//   BPM   = 60 / mean of the last BPM_AVG_N accepted RR intervals
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
@@ -48,7 +48,7 @@ typedef struct {
 typedef struct {
   float red_ac, ir_ac;  // band-passed and inverted
   float red_dc, ir_dc;  // low-passed
-  float ir_view;        // IR through the wide display band-pass, inverted: for drawing, not measuring
+  float ir_view;        // IR through the display band-pass, inverted: for drawing, not measuring
   float beat_thr;       // beat detection threshold
   bool beat;            // a beat was declared on this sample (its peak was a few samples earlier)
   bool finger;          // finger state on this sample
@@ -63,6 +63,8 @@ typedef struct {
   uint32_t last_beat_n;
   float rr[BPM_MEDIAN_N];  // accepted RR intervals, in seconds, as a ring
   uint8_t rr_n, rr_head;
+  float rr_avg[BPM_AVG_N];  // the same accepted intervals, a longer ring: the BPM is their mean
+  uint8_t avg_n, avg_head;
   uint8_t rejects;  // rejected RRs in a row
 } PpgBeat;
 

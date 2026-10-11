@@ -145,8 +145,7 @@ static bool shutdownSensor() {
 
 // Every sample, right after ppg_push(). The screen follows the finger sample by sample (the
 // pipeline only refreshes its result once per second) and draws the trace of the IR through
-// the wide display filter (ir_view), which has the heartbeat pointing up and keeps the dicrotic
-// notch that the measuring filter removes.
+// the display filter (ir_view), which has the heartbeat pointing up.
 static void feedDisplay(const PpgDebug &d) {
   if (d.finger != fingerShown) {
     fingerShown = d.finger;

@@ -167,6 +167,7 @@ valor crudo muy por debajo del tope (262143), es un glitch del bus.
 | `capture.py` | Graba el CSV del dispositivo (modo `c`). `%USERPROFILE%\.platformio\penv\Scripts\python.exe tools\capture.py --port COM7 --seconds 60 --label dedo_quieto` |
 | `ppg_host.c` | Corre el pipeline en la PC sobre una captura. |
 | `session_host.c` | Corre el pipeline y el juez de la medición sobre una captura, con simulaciones de dedo retirado (`--finger-off S`), saturación (`--saturate S L`), ruido (`--noise S P`) y captura cortada (`--cut S`). Se compila con cualquier compilador de C99 (`python -m ziglang cc` sirve). |
+| `trace_host.c` | Compara la escala vertical de la traza de la pantalla (`src/trace_scale.c`) con la que había antes, sobre una captura: altura con la que se dibuja el último segundo, cuadros aplanados y columnas recortadas. Simula un golpe (`--spike S`) o un cambio de presión del dedo (`--press S PCT [LEN]`). Se compila con `python -m ziglang cc -O2 -std=c11 -Iinclude -Ilib/ppg -Isrc tools/trace_host.c src/trace_scale.c lib/ppg/ppg_processor.c lib/ppg/sos_filter.c -lm -o trace_host`. |
 | `validate_ppg.py` | Compara el pipeline en C con scipy y con `procesamiento.py`. |
 | `gen_ppg_coefs.py` | Genera `lib/ppg/ppg_coefs.h` desde `config.h`. Hay que correrlo si cambia la frecuencia de muestreo o un filtro. |
 | `gen_display_assets.py` | Genera `src/display_assets.h`. |

@@ -125,22 +125,22 @@
 #define SETTLE_S 2.0f              // after the finger appears: let the filters settle, no beats
 
 // ---- Filtering -----------------------------------------------------------------
-// The same Butterworth filters as tools/procesamiento.py, run in a single pass
-// (the script uses filtfilt, which needs the whole recording). The device does not
-// compute their coefficients: tools/gen_ppg_coefs.py reads these four values and
-// the sample rate above, and writes lib/ppg/ppg_coefs.h. Run it again after
-// changing any of them.
+// Butterworth filters designed as in tools/procesamiento.py (scipy.signal.butter; that script
+// has its band-pass at 0.5-4 Hz) and run in a single pass (the script uses filtfilt, which
+// needs the whole recording). The device does not compute their coefficients:
+// tools/gen_ppg_coefs.py reads these four values and the sample rate above, and writes
+// lib/ppg/ppg_coefs.h. Run it again after changing any of them.
 #define FILTER_ORDER 4             // order of each filter (the band-pass has twice the poles)
 #define BAND_LOW_HZ 0.5f           // band-pass for the AC component
-#define BAND_HIGH_HZ 4.0f
+#define BAND_HIGH_HZ 6.0f
 #define DC_CUTOFF_HZ 0.2f          // low-pass for the DC component
 
-// A second, gentler band-pass only to DRAW the pulse on the TFT. The 0.5-4 Hz filter above
-// is meant for measuring (RMS amplitude) and is too narrow to show the waveform: the
-// dicrotic notch lives between 4 and 10 Hz. SpO2 and heart rate do not use this one.
-#define VIEW_FILTER_ORDER 2
+// A second band-pass only to DRAW the pulse on the TFT, kept apart from the measuring one so
+// that the screen can be tuned without touching SpO2 or heart rate, which do not use it. For
+// now it has the same band and order as the measuring filter, so both see the same signal.
+#define VIEW_FILTER_ORDER 4
 #define VIEW_BAND_LOW_HZ 0.5f
-#define VIEW_BAND_HIGH_HZ 10.0f
+#define VIEW_BAND_HIGH_HZ 6.0f
 
 // ---- Beat detection --------------------------------------------------------------
 #define BEAT_ENV_TAU_S 2.0f        // decay of the peak envelope
@@ -153,7 +153,11 @@
 #define RR_MAX_S 2.0f              // 30 bpm
 #define RR_MAX_DEVIATION 0.30f     // reject an RR this far from the current median
 #define RR_MAX_REJECTS 3           // this many rejected RRs in a row: forget the history and start over
-#define BPM_MEDIAN_N 5             // RRs kept; BPM = 60 / their median
+#define BPM_MEDIAN_N 5             // RRs kept for the plausibility check (their median), the validity of
+                           // the BPM and the quality (how much they vary)
+#define BPM_AVG_N 15               // BPM = 60 / mean of the last this many accepted RRs: ~10 s at 90 bpm,
+                           // ~15 s at 60. Smooths the breathing swings (a 5-RR median followed them) at
+                           // the cost of taking about that long to follow a real change of rate
 #define BPM_VALID_MIN_RR 5
 #define BPM_VALID_MAX_CV 0.15f
 

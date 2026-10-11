@@ -24,6 +24,7 @@ struct DemoStep {
   uint8_t battery;
   int progress;   // measuring: 0-100, -1 = no bar
   bool sent;      // result: reached the cloud
+  bool knock;     // measuring: a spike in the signal 2 s in, as a finger movement or a bus glitch
 };
 
 static const DemoStep STEPS[] = {
@@ -31,6 +32,8 @@ static const DemoStep STEPS[] = {
     {"coloca el dedo", Kind::WAIT_FINGER, 0, 0, true, 82, -1, false},
     {"midiendo, todavia sin valores (progreso 8 %)", Kind::MEASURING, 0, 0, true, 82, 8, false},
     {"A  midiendo, SpO2 normal (98 %, 72 BPM), progreso 40 %", Kind::MEASURING, 98, 72, true, 82, 40, false},
+    {"A  con un golpe en la senal a los 2 s: la onda no tiene que aplanarse", Kind::MEASURING, 98, 72, true, 82, 45,
+     false, true},
     {"B  precaucion (94 %, 90 BPM), progreso 62 %", Kind::MEASURING, 94, 90, true, 82, 62, false},
     {"C  critica (89 %, 120 BPM), progreso 90 %", Kind::MEASURING, 89, 120, true, 82, 90, false},
     {"resultado normal, enviado", Kind::RESULT, 98, 72, true, 82, -1, true},
@@ -42,6 +45,8 @@ static const DemoStep STEPS[] = {
 };
 static const int STEP_COUNT = sizeof(STEPS) / sizeof(STEPS[0]);
 static const uint32_t STEP_MS = 5000;
+static const uint32_t KNOCK_AT_MS = 2000, KNOCK_LEN_MS = 300;
+static const float KNOCK_AMPLITUDE = 15000.0f;  // 15 times the pulse
 static const uint32_t SAMPLE_MS = (uint32_t)(1000.0f / SENSOR_FS_HZ);
 
 static int step = 0;
@@ -108,7 +113,10 @@ void loop() {
   for (int i = 0; i < 10 && (int32_t)(now - nextSample) >= 0; i++) {
     pulsePhase += bpm / 60.0f / SENSOR_FS_HZ;
     pulsePhase -= floorf(pulsePhase);
-    displayPushPpg(fakeSample(pulsePhase));
+    float sample = fakeSample(pulsePhase);
+    const uint32_t inStep = now - stepAt;
+    if (STEPS[step].knock && inStep >= KNOCK_AT_MS && inStep < KNOCK_AT_MS + KNOCK_LEN_MS) sample += KNOCK_AMPLITUDE;
+    displayPushPpg(sample);
     nextSample += SAMPLE_MS;
   }
 
