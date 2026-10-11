@@ -153,7 +153,11 @@
 #define RR_MAX_S 2.0f              // 30 bpm
 #define RR_MAX_DEVIATION 0.30f     // reject an RR this far from the current median
 #define RR_MAX_REJECTS 3           // this many rejected RRs in a row: forget the history and start over
-#define BPM_MEDIAN_N 5             // RRs kept; BPM = 60 / their median
+#define BPM_MEDIAN_N 5             // RRs kept for the plausibility check (their median), the validity of
+                           // the BPM and the quality (how much they vary)
+#define BPM_AVG_N 15               // BPM = 60 / mean of the last this many accepted RRs: ~10 s at 90 bpm,
+                           // ~15 s at 60. Smooths the breathing swings (a 5-RR median followed them) at
+                           // the cost of taking about that long to follow a real change of rate
 #define BPM_VALID_MIN_RR 5
 #define BPM_VALID_MAX_CV 0.15f
 

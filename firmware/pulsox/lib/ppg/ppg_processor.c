@@ -43,6 +43,16 @@ static void rr_push(PpgBeat *b, float rr) {
   b->rr[b->rr_head] = rr;
   b->rr_head = (uint8_t)((b->rr_head + 1) % BPM_MEDIAN_N);
   if (b->rr_n < BPM_MEDIAN_N) b->rr_n++;
+  b->rr_avg[b->avg_head] = rr;
+  b->avg_head = (uint8_t)((b->avg_head + 1) % BPM_AVG_N);
+  if (b->avg_n < BPM_AVG_N) b->avg_n++;
+}
+
+// Mean of the accepted RR intervals of the long ring (avg_n > 0).
+static float rr_avg_mean(const PpgBeat *b) {
+  float sum = 0.0f;
+  for (int i = 0; i < b->avg_n; i++) sum += b->rr_avg[i];
+  return sum / b->avg_n;
 }
 
 // A beat whose IR AC peak was at sample `peak_n`. Returns true if it counts as a beat.
@@ -66,6 +76,8 @@ static bool beat_register(PpgBeat *b, uint32_t peak_n) {
       // really changed): start over instead of rejecting everything forever.
       b->rr_n = 0;
       b->rr_head = 0;
+      b->avg_n = 0;
+      b->avg_head = 0;
       b->rejects = 0;
       if (in_range) rr_push(b, rr);
     }
@@ -119,8 +131,7 @@ static void evaluate_heart_rate(PpgProcessor *p) {
   // No beat for a while: whatever the history says is stale, report nothing.
   if (b->rr_n == 0 || (p->n - b->last_beat_n) > LAST_BEAT_MAX_N) return;
 
-  float med = rr_median(b);
-  o->bpm = 60.0f / med;
+  o->bpm = 60.0f / rr_avg_mean(b);
   if (b->rr_n < BPM_VALID_MIN_RR) return;
 
   o->bpm_valid = rr_cv(b) <= BPM_VALID_MAX_CV;

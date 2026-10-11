@@ -16,7 +16,7 @@
 // Once per second (when ppg_push returns true) the output is refreshed:
 //   R     = (RMS(AC_red) / mean(DC_red)) / (RMS(AC_ir) / mean(DC_ir))
 //   SpO2  = SPO2_TABLE[round(R * 100)]
-//   BPM   = 60 / median of the last BPM_MEDIAN_N RR intervals
+//   BPM   = 60 / mean of the last BPM_AVG_N accepted RR intervals
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
@@ -63,6 +63,8 @@ typedef struct {
   uint32_t last_beat_n;
   float rr[BPM_MEDIAN_N];  // accepted RR intervals, in seconds, as a ring
   uint8_t rr_n, rr_head;
+  float rr_avg[BPM_AVG_N];  // the same accepted intervals, a longer ring: the BPM is their mean
+  uint8_t avg_n, avg_head;
   uint8_t rejects;  // rejected RRs in a row
 } PpgBeat;
 
