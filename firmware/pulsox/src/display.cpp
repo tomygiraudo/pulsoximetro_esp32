@@ -22,6 +22,7 @@
 #include "display.h"
 #include "display_assets.h"
 #include "tft_st7735.h"
+#include "trace_scale.h"
 
 namespace {
 
@@ -121,8 +122,7 @@ bool plotDirty = false;
 float ppgPhase = 0.0f;         // columns owed to the trace, accumulates DISPLAY_PPG_PX_PER_S / INPUT_HZ
 float ppgSum = 0.0f;
 int ppgCount = 0;
-float scaleLo = 0.0f, scaleHi = 0.0f;
-bool scaleValid = false;
+TraceScale traceScale;         // vertical scale of the trace (trace_scale.h)
 uint32_t plotMs = 0;
 
 bool asleep = false;           // panel in sleep-in, backlight off (displaySleep)
@@ -517,8 +517,10 @@ void drawPlot() {
   for (int gy = 0; gy < PLOT_ROWS; gy += 19) fillRect(PLOT_X + 1, PLOT_Y + 1 + gy, PLOT_COLS, 1, C_LINE);
   for (int gx = 0; gx < PLOT_COLS; gx += 20) fillRect(PLOT_X + 1 + gx, PLOT_Y + 1, 1, PLOT_ROWS, C_LINE);
 
-  // Trace: autoscale the history to the band between the baseline and the peak. Until the
-  // history fills up, the trace grows from the right edge.
+  // Trace: scale the history to the band between the baseline and the peak. The scale is the
+  // robust one of trace_scale.c, so a spike or a finger movement does not flatten the wave:
+  // the spike is drawn clipped against the edge of the plot. Until the history fills up, the
+  // trace grows from the right edge.
   const int first = PLOT_COLS - histCount;  // first column with data
   int32_t yq[PLOT_COLS];
   if (histCount > 0) {
@@ -528,13 +530,8 @@ void drawPlot() {
       if (v < lo) lo = v;
       if (v > hi) hi = v;
     }
-    if (!scaleValid) {
-      scaleLo = lo;
-      scaleHi = hi;
-      scaleValid = true;
-    }
-    scaleLo = lo < scaleLo ? lo : scaleLo + (lo - scaleLo) * 0.1f;  // widen at once, narrow slowly
-    scaleHi = hi > scaleHi ? hi : scaleHi + (hi - scaleHi) * 0.1f;
+    float scaleLo, scaleHi;
+    trace_scale_update(&traceScale, lo, hi, &scaleLo, &scaleHi);
     float span = scaleHi - scaleLo;
     float base = scaleLo;
     if (span < DISPLAY_PPG_MIN_SPAN) {
@@ -542,9 +539,14 @@ void drawPlot() {
       span = DISPLAY_PPG_MIN_SPAN;
     }
     const float k = (PLOT_BASE_Y - PLOT_PEAK_Y) / span * 16.0f;
+    // Centers of the first and last row, in 1/16 px: where a clipped value sits.
+    constexpr float CLIP_TOP = 8.0f, CLIP_BOTTOM = PLOT_ROWS * 16.0f - 8.0f;
     for (int i = first; i < PLOT_COLS; i++) {
       float v = hist[(histHead + i) % PLOT_COLS];
-      yq[i] = (int32_t)(PLOT_BASE_Y * 16.0f - (v - base) * k + 0.5f);
+      float y = PLOT_BASE_Y * 16.0f - (v - base) * k;
+      if (y < CLIP_TOP) y = CLIP_TOP;
+      if (y > CLIP_BOTTOM) y = CLIP_BOTTOM;
+      yq[i] = (int32_t)(y + 0.5f);
     }
   }
   memset(cov, 0, PLOT_ROWS * PLOT_COLS);
@@ -565,13 +567,14 @@ void pushColumn(float v) {
   hist[histHead] = v;
   histHead = (histHead + 1) % PLOT_COLS;
   if (histCount < PLOT_COLS) histCount++;
+  trace_scale_push(&traceScale, v);
   plotDirty = true;
 }
 
 void resetPlot() {
   histCount = 0;
   histHead = 0;
-  scaleValid = false;
+  trace_scale_reset(&traceScale);
   ppgPhase = 0.0f;
   ppgSum = 0.0f;
   ppgCount = 0;
