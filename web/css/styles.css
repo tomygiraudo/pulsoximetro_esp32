@@ -666,10 +666,19 @@ h1:focus {
 
 .history-group__head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px 8px;
   margin: 0 6px 8px;
+}
+
+.history-group__heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 8px;
+  min-width: 0;
 }
 
 .history-group__title {
@@ -681,6 +690,92 @@ h1:focus {
   font-size: 13px;
   font-weight: 500;
   color: var(--color-muted);
+}
+
+/* The signal of one measurement: a button in the group head opens a panel with
+   the whole recording as a strip that scrolls sideways. */
+.signal-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--color-violet-tint);
+  color: var(--color-violet);
+  font-size: 13px;
+  font-weight: 700;
+  transition: opacity var(--motion-fast) var(--ease-standard);
+}
+
+.signal-toggle:hover {
+  opacity: 0.85;
+}
+
+.signal-toggle[aria-expanded="true"] {
+  background: var(--color-violet);
+  color: var(--color-on-primary);
+}
+
+.signal-panel {
+  margin-bottom: 10px;
+  padding: 12px 0 10px;
+  background: var(--color-surface);
+  border-radius: var(--radius-card-sm);
+}
+
+.signal-panel[hidden] {
+  display: none;
+}
+
+.signal-panel__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 16px 6px;
+}
+
+.signal-panel__title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.signal-panel__meta {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.signal-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.signal-scroll:focus-visible {
+  outline-offset: -2px;
+}
+
+.signal-canvas {
+  display: block;
+  height: 140px; /* PPG_STRIP_HEIGHT; the width is set when it is drawn */
+}
+
+.signal-panel__hint,
+.signal-panel__msg {
+  margin: 6px 16px 0;
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 500;
+  color: var(--color-muted);
+}
+
+.signal-panel .btn-soft {
+  margin: 8px 16px 0;
 }
 
 .history-list {
