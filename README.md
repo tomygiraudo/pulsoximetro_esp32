@@ -1,6 +1,11 @@
 # Pulsoximetro portátil WI-FI
 
 Diseño open-source de un pulsioxímetro doméstico portátil con conexión WI-FI para la materia de instrumentación Biomédica, realizado con un ESP32-C3 Super mini, un sensor de Fotoplestimografía (PPG) MAX30102, un circuito de carga y control de batería, una baterpia de 3.7 V y 230 mAh y una pantalla TFT 128x128 px con controlador STF775S.
+<div align="center"> 
+<img  width="580" height="548" alt="Gemini_Generated_Image_x7xrnwx7xrnwx7xr" src="https://github.com/user-attachments/assets/d1a2941a-a398-41fd-8816-c9f2f306fcf5" />
+</div>
+
+
 
 Detalles:
 
@@ -18,7 +23,7 @@ Detalles:
 https://colab.research.google.com/drive/18P-XyyEuqM189sJWGMnf9TlH9UD-HeR_?usp=sharing 
 
 <img width="1589" height="990" alt="image" src="https://github.com/user-attachments/assets/2c3757df-b4d7-4383-8362-4da494ee0da2" />
-Links utiles: 
+Links útiles del fabricante del MAX30102: 
 https://www.analog.com/en/resources/reference-designs/maxrefdes117.html
 https://www.analog.com/en/resources/technical-articles/how-to-design-a-better-pulse-oximeter.html 
 https://www.analog.com/en/resources/technical-articles/guidelines-for-spo2-measurement--maxim-integrated.html
@@ -34,22 +39,23 @@ Los archivos STL para la impresión de la carcasa se encuentran en Carcasa/. Las
 -  Altura de capa: 0,16 mm
 -  Perímetros: 5 * 0,4 mm
 -  Relleno: 50% o superior
-<img width="632" height="632" alt="Pulsoximetro_resorte_integrado v18" src="https://github.com/user-attachments/assets/9b4e9e05-b3e6-4bce-935d-9d0769c873d7" />
-<img width="632" height="632" alt="Pulsoximetro_resorte_integrado v18" src="https://github.com/user-attachments/assets/42292ed9-1998-4dac-8590-836d851efa5f" />
-<img width="632" height="632" alt="Pulsoximetro_resorte_integrado v18" src="https://github.com/user-attachments/assets/98b387b2-90e0-47c4-b829-ec0f01a29e5d" />
+<img width="400" height="400" alt="Pulsoximetro_resorte_integrado v18" src="https://github.com/user-attachments/assets/9b4e9e05-b3e6-4bce-935d-9d0769c873d7" />
+<img width="400" height="400" alt="Pulsoximetro_resorte_integrado v18" src="https://github.com/user-attachments/assets/42292ed9-1998-4dac-8590-836d851efa5f" />
+<img width="400" height="400" alt="Pulsoximetro_resorte_integrado v18" src="https://github.com/user-attachments/assets/98b387b2-90e0-47c4-b829-ec0f01a29e5d" />
 
 
 
-## Protocolo de telemetría
+## Telemetría del ESP32
 
-Ver [`PROTOCOL.md`](PROTOCOL.md): flujo de una medición (`hello` →
-`measurement_start` → `telemetry` + `ppg` → fin) y formato de los mensajes JSON
-que el firmware del ESP32 debe enviar por WebSocket, y el modelo de datos y las
-llamadas REST del transporte en la nube. El armado de
-`measurement_start`, `ppg` y `measurement_end` está marcado como **pendiente**.
-El simulador (`web/js/simulator.js`) implementa el ciclo completo con un
-formato provisional, así que sirve como referencia ejecutable además del
-documento.
+El ESP32-C3 envía cada medición por **HTTPS (REST) a Firebase Realtime Database**. La web app la muestra en vivo y la guarda en el historial.
+
+- **Conexión:** al presionar el botón, el ESP32 se conecta al WiFi, inicia sesión en Firebase y mantiene una sola conexión TLS abierta durante la medición.
+- **En vivo (1 Hz):** cada segundo reemplaza `devices/<id>/live` con SpO₂, BPM, calidad de señal, estado del dedo y la traza PPG (50 muestras/s). Al terminar, borra `live`.
+- **Historial:** una medición válida (45–60 s) guarda una única lectura final en `sessions/<sid>`. El valor es la mediana de los últimos 20 s válidos. Si la medición se descarta (dedo retirado o señal errática), la sesión se borra.
+- **Credenciales:** WiFi, API key y usuario del dispositivo van en `firmware/pulsox/include/secrets.h`. El archivo se crea a partir de `secrets.h.example` y no se sube al repo.
+
+Detalle de nodos, llamadas REST y reglas de seguridad en [`PROTOCOL.md`](PROTOCOL.md). Firmware en [`firmware/pulsox`](firmware/pulsox).
+
 
 ## Sistema de diseño y tipografías para pantalla y app web 
 
@@ -57,22 +63,14 @@ Ver [`design-system/pulsox-esp32/`](design-system/pulsox-esp32/): paleta,
 tipografía, formas y especificación de componentes (gauge de SpO2, tarjeta de
 frecuencia cardíaca, traza PPG, barra de navegación, historial) usados por la
 web app.
-
-<img position=center width="338" height="747" alt="image" src="https://github.com/user-attachments/assets/b3259339-e40b-495a-b335-278f26770e1f" /> 
-
-<img width="300" height="300" alt="image" src="https://github.com/user-attachments/assets/9c6ffa2e-40d0-4aed-a427-e95c24bd181f" /> <img width="300" height="300" alt="image" src="https://github.com/user-attachments/assets/416e92ef-37c2-4a64-9126-c4b70426730d" /> <img width="300" height="300" alt="image" src="https://github.com/user-attachments/assets/866001e8-2c0b-4c04-95fa-910bc8762985" />
-
-
-
-
-
+<div align="center">
+  <img position=center width="338" height="747" alt="image" src="https://github.com/user-attachments/assets/b3259339-e40b-495a-b335-278f26770e1f" /> 
+</div>
+<div align="center">
+     <img width="300" height="300" alt="image" src="https://github.com/user-attachments/assets/9c6ffa2e-40d0-4aed-a427-e95c24bd181f" /> <img width="300" height="300" alt="image" src="https://github.com/user-attachments/assets/416e92ef-37c2-4a64-9126-c4b70426730d" /> <img width="300" height="300" alt="image" src="https://github.com/user-attachments/assets/866001e8-2c0b-4c04-95fa-910bc8762985" />                 
+  </div>
 
 ## Próximos pasos
 
-- Cerrar el armado de los paquetes pendientes de `PROTOCOL.md`
-  (`measurement_start`, `ppg`, `measurement_end`).
-- Firmware ESP32-C3: lectura del MAX30102, cálculo de SpO2/BPM integrado en el ESP32 C3.
-- Cliente de la nube en el ESP32 (WiFi STA + TLS + login + keep-alive, integrado
-  con deep sleep y el botón).
-- Conectar la web app al dispositivo real y validar el modo `live` / Nube end-to-end.
+- Comparar mediciones con un patrón y realizar una calibración o informe de resultados.
 
