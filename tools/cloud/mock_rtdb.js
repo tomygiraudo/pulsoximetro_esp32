@@ -13,13 +13,14 @@
 //     signInWithPassword, signUp, delete, and the token refresh.
 //
 // Access control comes from the repository's own tools/cloud/database.rules.json,
-// interpreted by a small subset evaluator: `.read` / `.write` (cascading, with
-// `auth`) and `.validate` (checked on the written subtree and its ancestors, with
-// `newData`, `now`, `$wildcard` children and `$other`). So fake_device.py's
-// payloads and check_rules.py can be tried against the rules AS WRITTEN. It is a
-// test double, not Firebase's rules engine (no `data`/`root`, no `.indexOn`
-// enforcement, no query rules): the real service is still the final check
-// (tools/cloud/check_rules.py without --mock).
+// interpreted by a small subset evaluator: `.read` (cascading, with `auth`),
+// `.write` (cascading, with `auth`, `newData`, `data`, `root`, `now` and the
+// `$wildcard` variables of the path) and `.validate` (checked on the written
+// subtree and its ancestors, with `newData`, `now`, `$wildcard` children and
+// `$other`). So fake_device.py's payloads and check_rules.py can be tried against
+// the rules AS WRITTEN. It is a test double, not Firebase's rules engine (no
+// `.indexOn` enforcement, no query rules): the real service is still the final
+// check (tools/cloud/check_rules.py without --mock).
 //
 //   node tools/cloud/mock_rtdb.js [--port 9000] [--redirect-port 9001]
 //        [--keepalive-ms 30000] [--token-ttl 3600] [--rules path/to/rules.json]
@@ -111,23 +112,51 @@ function loadRules(file, deviceUid) {
   return JSON.parse(text).rules;
 }
 
-/** The `newData` object rule expressions see, for a plain JSON value. */
+/** The snapshot object rule expressions see (`newData`, `data`, `root`), for a plain JSON value. */
 function newDataShim(v) {
   return {
     isString: () => typeof v === "string",
     isNumber: () => typeof v === "number",
     isBoolean: () => typeof v === "boolean",
     exists: () => v !== null && v !== undefined,
-    val: () => v,
+    val: () => (v === undefined ? null : v),
     hasChildren: (keys) => isObject(v) && (keys ? keys.every((k) => k in v) : Object.keys(v).length > 0),
     hasChild: (k) => isObject(v) && k in v,
+    child: (p) =>
+      newDataShim(
+        String(p)
+          .split("/")
+          .filter(Boolean)
+          .reduce((node, key) => (isObject(node) && key in node ? node[key] : null), v)
+      ),
   };
 }
 
-function evalRule(expr, { auth = null, newData = null, now = Date.now() } = {}) {
+/** `auth`, `newData`, `now`, plus `data` (the value before the write), `root` (the whole
+ * database before the write) and the `$wildcard` variables of the path (`vars`). */
+function evalRule(expr, { auth = null, newData = null, now = Date.now(), data = newDataShim(null), root = newDataShim(null), vars = {} } = {}) {
   if (typeof expr === "boolean") return expr;
   // the expressions are plain JS syntax (&&, ||, comparisons, method calls on newData)
-  return Boolean(new Function("auth", "newData", "now", `"use strict"; return (${expr});`)(auth, newData, now));
+  const names = ["auth", "newData", "now", "data", "root", ...Object.keys(vars)];
+  return Boolean(new Function(...names, `"use strict"; return (${expr});`)(auth, newData, now, data, root, ...Object.values(vars)));
+}
+
+/** { $deviceId: "...", $sid: "..." }: which `$wildcard` of the rules each path segment matched. */
+function wildcardVars(rules, segments) {
+  const vars = {};
+  let node = rules;
+  for (const seg of segments) {
+    if (!isObject(node)) break;
+    if (!seg.startsWith(".") && Object.prototype.hasOwnProperty.call(node, seg)) {
+      node = node[seg];
+      continue;
+    }
+    const wildcard = Object.keys(node).find((k) => k.startsWith("$"));
+    if (!wildcard) break;
+    vars[wildcard] = seg;
+    node = node[wildcard];
+  }
+  return vars;
 }
 
 /** The rule node for `key` under `rule`: the literal key, else the `$wildcard`. */
@@ -148,6 +177,22 @@ function ruleChain(rules, segments) {
 /** `.read` / `.write` cascade: one `true` at or above the location grants access. */
 function allowed(kind, chain, ctx) {
   return chain.some((node) => isObject(node) && node[kind] !== undefined && evalRule(node[kind], ctx));
+}
+
+/** `.write` of a write at `segments`: every rule on the way down sees the value at its own
+ * location before (`data`) and after (`newData`) the write; one `true` grants it (it cascades). */
+function allowedWrite(rules, tree, next, segments, ctx) {
+  const chain = ruleChain(rules, segments);
+  const vars = wildcardVars(rules, segments);
+  const root = newDataShim(tree);
+  for (let i = 0; i < chain.length; i++) {
+    const node = chain[i];
+    if (!isObject(node) || node[".write"] === undefined) continue;
+    const prefix = segments.slice(0, i);
+    const rule = { ...ctx, newData: newDataShim(getAt(next, prefix)), data: newDataShim(getAt(tree, prefix)), root, vars };
+    if (evalRule(node[".write"], rule)) return true;
+  }
+  return false;
 }
 
 /** `.validate` on the new value and everything below it (deletes are not validated). */
@@ -265,9 +310,7 @@ function start(options = {}) {
       return send(res, 200, value);
     }
 
-    // ---- writes
-    if (!allowed(".write", ruleChain(rules, segments), { auth, now })) return denied(res);
-
+    // ---- writes (the `.write` rules may look at the new and the old data, so they run once the result is known)
     let body = null;
     if (req.method !== "DELETE") {
       try {
@@ -320,6 +363,7 @@ function start(options = {}) {
       default:
         return send(res, 405, { error: "Method not allowed" });
     }
+    if (!written.every((target) => allowedWrite(rules, tree, next, target, { auth, now }))) return denied(res);
     // a failed .validate is reported like a denied write (401 "Permission denied")
     if (!written.every((target) => validateWrite(rules, next, target, now))) return denied(res);
 

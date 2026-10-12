@@ -13,6 +13,10 @@ Comprueba (lo que el plan exige de las reglas):
         (crea un usuario descartable con accounts:signUp y lo borra; --no-signup lo omite)
   - escritura del usuario del dispositivo (live/info/sessions) -> 200
   - valores fuera de rango / campos desconocidos         -> denegados (.validate)
+  - ppg/<sid> (la senal que guarda el navegador, sin login): solo de una sesion
+        cerrada, solo si trae mas muestras que la guardada, sin borrar, con tope de tamanio
+        (la ventana de 10 min tras endedAt no se prueba aca: habria que esperarla;
+        la prueba esta en tests/signal.test.js, contra el mock)
   - consulta orderBy="startedAt"&limitToLast=N           -> 200 (necesita .indexOn)
 
 Una escritura denegada por las reglas responde 401 "Permission denied" en la
@@ -123,6 +127,23 @@ def main():
         sid = started["name"] if started else "x"
         check("dispositivo: POST sessions/<sid>/readings", (200,), call("POST", url(f"sessions/{sid}/readings", tok), {"ts": SERVER_TIMESTAMP, "spo2": 96, "bpm": 70, "quality": 0.7}))
         check("dispositivo: PATCH sessions/<sid> endedAt", (200,), call("PATCH", url(f"sessions/{sid}", tok), {"endedAt": SERVER_TIMESTAMP}))
+
+        # --- la senal PPG de la medicion (ppg/<sid>): la guarda el NAVEGADOR, sin login, y las reglas la acotan
+        sig = lambda n, **kw: {"fs": 50, "n": n, "data": ",".join(str(i) for i in range(n)), **kw}
+        open_sid = rest.request("POST", url("sessions", tok), {"startedAt": SERVER_TIMESTAMP})["name"]
+        check("ppg: sesion inexistente", DENIED, call("PUT", url("ppg/-Nnoexiste"), sig(30)))
+        check("ppg: sesion todavia abierta (sin endedAt)", DENIED, call("PUT", url(f"ppg/{open_sid}"), sig(30)))
+        check("ppg: anonimo guarda la senal de una sesion cerrada", (200,), call("PUT", url(f"ppg/{sid}"), sig(30)))
+        check("ppg: lectura anonima de lo guardado", (200,), call("GET", url(f"ppg/{sid}")))
+        check("ppg: no se reemplaza por una igual", DENIED, call("PUT", url(f"ppg/{sid}"), sig(30)))
+        check("ppg: no se reemplaza por una mas corta", DENIED, call("PUT", url(f"ppg/{sid}"), sig(20)))
+        check("ppg: si por una mas larga", (200,), call("PUT", url(f"ppg/{sid}"), sig(40)))
+        check("ppg: anonimo no puede borrarla", DENIED, call("DELETE", url(f"ppg/{sid}")))
+        check("ppg: validate: texto de mas de 40000 caracteres", DENIED, call("PUT", url(f"ppg/{sid}"), sig(50, data="1," * 20001)))
+        check("ppg: validate: n fuera de rango", DENIED, call("PUT", url(f"ppg/{sid}"), sig(7000)))
+        check("ppg: validate: campo desconocido", DENIED, call("PUT", url(f"ppg/{sid}"), sig(60, hack="x")))
+        check("ppg: el anonimo sigue sin poder tocar sessions", DENIED, call("PATCH", url(f"sessions/{sid}"), {"endedAt": 1}))
+        check("ppg: el dispositivo puede borrarla", (200,), call("DELETE", url(f"ppg/{sid}", tok)))
 
         # --- .validate
         check("validate: spo2 = 500 en live", DENIED, call("PUT", url("live", tok), now_body(spo2=500)))

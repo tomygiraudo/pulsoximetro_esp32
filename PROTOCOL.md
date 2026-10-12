@@ -311,6 +311,8 @@ ESP32 ──HTTPS (REST, con login)──►  Firebase Realtime DB  ◄──RES
   sessions/<sid>  { startedAt, endedAt, readings/<pushKey> { ts, spo2, bpm, quality } }
                                                                           sid = push key (orden cronológico);
                                                                           readings: UNA sola, el resultado, al terminar
+  ppg/<sid>       { fs, n, data:"112,340,,,-5,…" }                        la señal COMPLETA de la medición; la guarda el
+                                                                          NAVEGADOR (no el dispositivo), ver abajo
 ```
 
 `<deviceId>` es la "llave" de la URL de lectura (`web/js/cloud-config.js` y
@@ -405,6 +407,58 @@ Notas para el firmware (la especificación ejecutable es
 - **Volumen.** Un PUT de `live` ronda los 0,5–0,6 KB: una medición de 1 h son
   ~2 MB de subida más ~720 lecturas de ~70 B.
 
+### Señal PPG de cada medición (`ppg/<sid>`)
+
+El Historial puede mostrar la señal de cada medición ("Ver señal"). El
+dispositivo **no** la guarda: `live.ppg` se reemplaza cada segundo y se borra al
+terminar, y juntar y subir 15 kB más costaría RAM y tiempo de radio en un equipo
+que duerme entre mediciones. La junta **la página que está mirando la
+medición** y la guarda completa cuando termina (`web/js/signal.js`):
+
+1. Por cada segundo que llega (`telemetry` + `ppg`) guarda el lote bajo su `seq`.
+   Un segundo que la página no vio (pestaña en segundo plano, entró tarde) queda
+   como un hueco, no se corre el eje de tiempo.
+2. Al borrarse `live` (fin de la medición) pregunta si la sesión existe y tiene
+   `endedAt`: una medición **descartada** (la sesión se borró) no se guarda.
+3. Si ya hay una señal guardada con `n` igual o mayor (otro visor que la vio
+   completa), no sube nada. Si no, `PUT <db>/devices/<id>/ppg/<sid>.json` con
+   `{ fs, n, data }` (hasta 3 intentos).
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| `fs` | number | Frecuencia de muestreo en Hz (50). |
+| `n` | integer | Muestras **reales** (sin contar huecos), 1–6000. Decide quién reemplaza a quién. |
+| `data` | string | Hasta 40 000 caracteres: las muestras en orden temporal separadas por comas, con **un campo vacío por cada muestra que falta** (`"112,340,,,,-5"`). El tiempo de cada muestra es `índice / fs` desde el inicio de la medición. |
+
+Va **fuera** de `sessions/<sid>` a propósito: el historial lee
+`sessions.json?limitToLast=30` en cada refresco y la base no permite excluir
+hijos; con la señal adentro cada lectura bajaría ~450 kB. Así la señal se baja
+sola, al abrir una medición (~15 kB).
+
+**Reglas** (`tools/cloud/database.rules.json`). Es la única escritura que no
+necesita el login del dispositivo, así que las reglas la acotan: solo se puede
+escribir `ppg/<sid>` si **existe** `sessions/<sid>/endedAt`, hasta **10 minutos
+después** de `endedAt` (después queda de solo lectura), solo con **más muestras**
+(`n`) que la guardada, **sin borrar** (solo el dispositivo puede), con tope de
+`n` y de tamaño del texto, y sin campos desconocidos. Sin esas reglas no habría
+cómo impedir que cualquiera llene la base con nodos nuevos.
+
+Límites:
+
+- **Solo hay señal si había un navegador mirando la medición.** Sin nadie
+  conectado, esa medición queda "sin señal guardada" (el historial de SpO₂/BPM
+  sí se guarda, lo escribe el dispositivo).
+- Una pestaña en segundo plano (iOS corta las conexiones) deja huecos; si se
+  cierra antes del fin, esa señal no se guarda.
+- El `deviceId` está en el JS público, así que **cualquiera puede escribir en
+  `ppg/`** dentro de lo que permiten las reglas (una señal falsa de más muestras,
+  durante los 10 min posteriores a una medición). Aceptable para una demo; para
+  un producto, quien guarda tendría que autenticarse (p. ej. Firebase Auth con una
+  lista de correos permitidos). `sessions`, `live` e `info` siguen siendo solo del
+  dispositivo: **los valores de SpO₂ y BPM no se pueden falsificar** por acá.
+- Para Demo y Red local la señal queda en `localStorage` (las últimas 20
+  mediciones, `pulsox.ppg.v1.<id>`); "Borrar historial" la borra.
+
 ### Cómo lo interpreta la web
 
 `web/js/cloud.js` (`CloudSource`) abre un `EventSource` a
@@ -441,7 +495,8 @@ Más detalles del comportamiento:
   que se está midiendo se muestra terminada en su última lectura (no "En curso").
   Se refresca al abrir Historial, al terminar una medición y cada 10 s mientras
   haya una medición abierta con el Historial a la vista. Es de solo lectura:
-  "Borrar historial" se deshabilita en esta fuente.
+  "Borrar historial" se deshabilita en esta fuente. Cada medición terminada tiene
+  un botón "Ver señal" que baja `ppg/<sid>` y la dibuja (ver arriba).
 - La app que se sirve desde GitHub Pages (HTTPS) puede usar este transporte
   porque `fetch` / `EventSource` hacia la base también son HTTPS; el WebSocket
   LAN (`ws://`) queda bloqueado por el navegador en una página HTTPS.
@@ -451,6 +506,11 @@ Más detalles del comportamiento:
 - **Datos de salud en un servicio de lectura pública.** Para un trabajo práctico
   alcanza con un `deviceId` no obvio y sin datos personales; **no sirve como
   producto** (sin autenticación de lectores, sin borrado por el usuario).
+- **`ppg/` es de escritura abierta** (acotada por las reglas, ver "Señal PPG de
+  cada medición"): el `deviceId` es público en el JS de la web, así que no es una
+  barrera. En el plan sin costo, llenar la cuota de 1 GB bloquearía también al
+  dispositivo; las reglas lo impiden porque no dejan crear nodos de sesiones
+  inexistentes (el máximo es ~2 veces el uso legítimo).
 - Plan sin costo de Firebase: 100 conexiones simultáneas (cada visor abierto es
   una) y cuotas de almacenamiento y descarga; el volumen por medición es de
   KB, pero conviene mirar el uso en la consola.

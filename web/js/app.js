@@ -104,6 +104,7 @@ const state = {
   bpmAt: 0,
   quality: 0,
   ppgFs: DEFAULT_PPG_FS,
+  lastSeq: null, // `seq` of the last telemetry: with the cloud source, the second the next PPG batch belongs to
   trendTab: "spo2",
   activeFilter: "all",
 };
@@ -121,6 +122,16 @@ const cloudHistory = cloudConfig
     })
   : null;
 let history = localHistory;
+
+// The PPG signal of each measurement (signal.js): this page records it while it watches the
+// measurement and saves it complete when the measurement ends, so the Historial can show it.
+// Same split as the history: the cloud one is shared, the local one is this browser's.
+const recorder = new SignalRecorder();
+const localSignals = new LocalSignalStore();
+const cloudSignals = cloudConfig ? new CloudSignalStore({ config: cloudConfig }) : null;
+let signals = localSignals;
+const signalViews = new Map(); // sid -> { status: "loading"|"ok"|"none"|"error", signal?, scrollLeft? } of the Historial panels
+const openSignals = new Set(); // sids whose panel is open
 
 // ---------------------------------------------------------------- DOM refs
 const $ = (id) => document.getElementById(id);
@@ -347,13 +358,12 @@ el.rangePills.addEventListener("click", (e) => {
 
 // -------------------------------------------------------------- PPG trace
 
-const ppg = new PpgTrace({
-  canvas: el.ppgCanvas,
-  getColors: () => {
-    const p = palette();
-    return { line: p.bpmLine, surface: p.surface, grid: p.grid, label: p.axisText, track: p.track };
-  },
-});
+function ppgColors() {
+  const p = palette();
+  return { line: p.bpmLine, surface: p.surface, grid: p.grid, label: p.axisText, track: p.track };
+}
+
+const ppg = new PpgTrace({ canvas: el.ppgCanvas, getColors: ppgColors });
 
 // ----------------------------------------------------------- connection
 
@@ -446,6 +456,7 @@ function beginSession({ implicit = false, id = null, startedAt = null } = {}) {
   state.result = null; // the previous result gives way to the new measurement
   resetLiveValues();
   ppg.clear();
+  recorder.begin(state.session.id);
   history.startSession({ id: state.session.id, startedAt, implicit });
   renderAll();
   if (!implicit) showToast("Medición iniciada");
@@ -464,6 +475,11 @@ function endSession({ silent = false, timedOut = false } = {}) {
     ? { spo2: state.spo2, bpm: state.bpm, startedAt: state.session.startedAt, endedAt: now, expiresAt: now + RESULT_HOLD_MS }
     : null;
   history.endSession(now);
+  // Only a measurement that ended normally keeps its signal: a lost connection or a silent device
+  // leaves it incomplete, and the cloud store skips what the device discarded.
+  const signal = silent || timedOut ? null : recorder.snapshot();
+  if (signal) saveSignal(state.session.id, signal);
+  recorder.begin(null);
   state.session = null;
   resetLiveValues();
   if (hasResult) ppg.freeze();
@@ -483,6 +499,7 @@ function handleTelemetry(msg) {
   const bpmKnown = finger && msg.bpm_valid && typeof msg.bpm === "number";
 
   state.telemetrySeen = true;
+  state.lastSeq = typeof msg.seq === "number" ? msg.seq : null;
   state.finger = finger;
   // A single invalid tick must not blank the readout: keep the last valid
   // value for a few seconds. (Charts and history still record the gap.)
@@ -533,7 +550,23 @@ function handlePpg(msg) {
   if (state.telemetrySeen && !state.finger) return;
   state.ppgFs = data.fs;
   ppg.push(data.samples, data.fs);
+  // The cloud source sends the telemetry of a second right before its PPG, so `lastSeq` says which second
+  // this batch is (the WebSocket's `seq` counts something else: its batches carry no number).
+  recorder.push(data.samples, data.fs, state.source === "cloud" ? state.lastSeq : null);
   renderPpgEmpty();
+}
+
+/** Keeps the signal of the measurement that just ended in the store of the current source. */
+function saveSignal(sid, signal) {
+  const store = signals;
+  store.save(sid, signal).then((outcome) => {
+    if (outcome === "failed") showToast("No se pudo guardar la señal de la medición");
+    if (outcome === "denied") console.warn("[signal] la base rechazó la señal: ¿están publicadas las reglas de tools/cloud/database.rules.json?");
+    if (outcome === "saved" && store === signals) {
+      signalViews.delete(sid); // whatever the panel said ("sin señal…") is out of date
+      hydrateSignalPanels();
+    }
+  });
 }
 
 // ---------------------------------------------------------- dashboard UI
@@ -852,6 +885,7 @@ function renderHistory() {
   }
 
   el.historyGroups.innerHTML = groups.map(groupHtml).join("");
+  hydrateSignalPanels();
 }
 
 function groupHtml({ session, active, rows }) {
@@ -859,6 +893,12 @@ function groupHtml({ session, active, rows }) {
   const end = session.endedAt ?? rows[0].ts;
   const title = session.legacy ? "Lecturas anteriores" : formatGroupTitle(start);
   const meta = session.legacy ? "" : active ? "En curso" : `Medición de ${formatDuration(end - start)}`;
+  // The signal of a measurement can be opened once it is over (ids are push keys / "m-<time>": safe in an attribute).
+  const hasSignal = !session.legacy && !active && SIGNAL_SID_PATTERN.test(session.id);
+  const signalToggle = hasSignal
+    ? `<button type="button" class="signal-toggle" data-signal-toggle="${session.id}" aria-expanded="false">${iconSvg("activity", { size: 16 })}<span>Ver señal</span></button>`
+    : "";
+  const signalPanel = hasSignal ? `<div class="signal-panel" data-signal-panel="${session.id}" hidden></div>` : "";
   const items = rows
     .map((entry) => {
       const spo2Text = entry.spo2 !== null ? `${Math.round(entry.spo2)} % SpO₂` : "SpO₂ —";
@@ -877,12 +917,100 @@ function groupHtml({ session, active, rows }) {
   return `
     <div class="history-group">
       <div class="history-group__head">
-        <h3 class="history-group__title">${title}</h3>
-        <span class="history-group__meta">${meta}</span>
+        <div class="history-group__heading">
+          <h3 class="history-group__title">${title}</h3>
+          <span class="history-group__meta">${meta}</span>
+        </div>
+        ${signalToggle}
       </div>
+      ${signalPanel}
       <ul class="history-list">${items}</ul>
     </div>`;
 }
+
+// ------------------------------------------------- recorded signal (Historial)
+
+const SIGNAL_MESSAGES = {
+  loading: "Cargando la señal…",
+  none: "Esta medición no tiene señal guardada.",
+  noneCloud: "Esta medición no tiene señal guardada: se guarda cuando la app está abierta mirando la medición.",
+  error: "No se pudo leer la señal.",
+};
+
+function signalPanels() {
+  return [...el.historyGroups.querySelectorAll("[data-signal-panel]")];
+}
+
+function hydrateSignalPanels() {
+  signalPanels().forEach(renderSignalPanel);
+}
+
+/** Fills one panel from what is known of its signal, and starts loading it the first time it is opened. */
+function renderSignalPanel(panel) {
+  const sid = panel.dataset.signalPanel;
+  const open = openSignals.has(sid);
+  const toggle = panel.closest(".history-group").querySelector("[data-signal-toggle]");
+  toggle.setAttribute("aria-expanded", String(open));
+  toggle.querySelector("span").textContent = open ? "Ocultar señal" : "Ver señal";
+  panel.hidden = !open;
+  if (!open) {
+    panel.innerHTML = "";
+    return;
+  }
+
+  let view = signalViews.get(sid);
+  if (!view) {
+    view = { status: "loading" };
+    signalViews.set(sid, view);
+    loadSignalView(sid);
+  }
+  if (view.status !== "ok") {
+    const text = view.status === "none" && state.source === "cloud" ? SIGNAL_MESSAGES.noneCloud : SIGNAL_MESSAGES[view.status];
+    const retry = view.status === "error" ? `<button type="button" class="btn-soft" data-signal-retry>Reintentar</button>` : "";
+    panel.innerHTML = `<p class="signal-panel__msg" role="status">${text}</p>${retry}`;
+    return;
+  }
+
+  const { signal } = view;
+  const duration = formatDuration((signal.values.length / signal.fs) * 1000);
+  panel.innerHTML = `
+    <div class="signal-panel__head">
+      <span class="signal-panel__title">Señal PPG filtrada</span>
+      <span class="signal-panel__meta">${duration} · ${signal.fs} Hz</span>
+    </div>
+    <div class="signal-scroll" tabindex="0" role="region" aria-label="Señal PPG de la medición: deslizá para recorrerla">
+      <canvas class="signal-canvas" role="img" aria-label="Señal PPG de una medición de ${duration}"></canvas>
+    </div>
+    <p class="signal-panel__hint">Deslizá hacia los costados para recorrer toda la medición.</p>`;
+  const scroll = panel.querySelector(".signal-scroll");
+  drawPpgStrip(panel.querySelector("canvas"), signal, ppgColors());
+  scroll.scrollLeft = view.scrollLeft || 0; // the list is rebuilt now and then: stay where the user was
+  scroll.addEventListener("scroll", () => (view.scrollLeft = scroll.scrollLeft), { passive: true });
+}
+
+function loadSignalView(sid) {
+  const store = signals;
+  store.load(sid).then((res) => {
+    if (store !== signals) return; // the source changed while it loaded
+    signalViews.set(sid, res.status === "ok" ? { status: "ok", signal: res.signal, scrollLeft: 0 } : { status: res.status });
+    const panel = signalPanels().find((p) => p.dataset.signalPanel === sid);
+    if (panel) renderSignalPanel(panel);
+  });
+}
+
+el.historyGroups.addEventListener("click", (e) => {
+  const toggle = e.target.closest("[data-signal-toggle]");
+  const retry = e.target.closest("[data-signal-retry]");
+  const sid = toggle ? toggle.dataset.signalToggle : retry?.closest("[data-signal-panel]")?.dataset.signalPanel;
+  if (!sid) return;
+  if (toggle) {
+    if (openSignals.has(sid)) openSignals.delete(sid);
+    else openSignals.add(sid);
+  }
+  if (signalViews.get(sid)?.status !== "ok") signalViews.delete(sid); // opening again (or retrying) asks again
+  const panel = signalPanels().find((p) => p.dataset.signalPanel === sid);
+  if (panel) renderSignalPanel(panel);
+});
 
 el.filterChips.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-filter]");
@@ -910,6 +1038,9 @@ el.clearHistoryBtn.addEventListener("click", () => {
   }
   clearArmed = false;
   history.clear();
+  signals.clear();
+  signalViews.clear();
+  openSignals.clear();
   renderHistory();
   resetClearButton();
   showToast("Historial borrado");
@@ -958,6 +1089,9 @@ function setSource(source, { persist = true } = {}) {
   state.hello = null;
   state.battery = null;
   history = source === "cloud" ? cloudHistory : localHistory;
+  signals = source === "cloud" ? cloudSignals : localSignals;
+  signalViews.clear();
+  openSignals.clear();
   ppg.setRenderDelay(source === "cloud" ? PPG_RENDER_DELAY_CLOUD_MS : PPG_RENDER_DELAY_MS);
   renderSourceUi();
   renderBattery();
@@ -1017,6 +1151,7 @@ function applyTheme() {
   spo2Chart.setTheme({ lineColor: p.spo2Line, surfaceColor: p.surface, axisText: p.axisText, grid: p.grid });
   bpmChart.setTheme({ lineColor: p.bpmLine, surfaceColor: p.surface, axisText: p.axisText, grid: p.grid });
   ppg.redraw();
+  hydrateSignalPanels();
   el.themeSegmented.querySelectorAll("button").forEach((b) => {
     const on = b.dataset.theme === state.theme;
     b.classList.toggle("is-active", on);

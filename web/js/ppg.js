@@ -260,3 +260,130 @@ class PpgTrace {
     ctx.stroke();
   }
 }
+
+// ------------------------------------------------------- recorded signal strip
+
+// The Historial shows the whole signal of a finished measurement (see signal.js)
+// as a fixed-scale strip the user scrolls sideways, like an ECG paper roll: at
+// 48 px per second a heartbeat is ~40 px wide, which a 60 s measurement squeezed
+// into a phone's width (~6 px per beat) could never show. Drawn once, no animation.
+
+const PPG_STRIP_PX_PER_S = 48;
+const PPG_STRIP_HEIGHT = 140; // CSS px; keep in step with .signal-canvas
+const PPG_STRIP_PAD = 14; // CSS px of margin on each side
+const PPG_STRIP_MAX_BACKING_PX = 16000; // a canvas much wider than this fails on some phones
+const PPG_STRIP_LABEL_EVERY_S = 5;
+
+/**
+ * Draws `signal` ({ fs, values }, null = gap) on `canvas` at a fixed scale and sizes
+ * the canvas to fit it. Returns the length of the signal in seconds.
+ * @param {HTMLCanvasElement} canvas
+ * @param {{fs: number, values: (number|null)[]}} signal
+ * @param {{line: string, surface: string, grid: string, label: string, track: string}} colors
+ */
+function drawPpgStrip(canvas, signal, colors) {
+  const { fs, values } = signal;
+  const seconds = values.length / fs;
+  const cssW = Math.ceil(seconds * PPG_STRIP_PX_PER_S) + 2 * PPG_STRIP_PAD;
+  const cssH = PPG_STRIP_HEIGHT;
+  const dpr = Math.min(window.devicePixelRatio || 1, PPG_STRIP_MAX_BACKING_PX / cssW);
+  canvas.style.width = `${cssW}px`;
+  canvas.style.height = `${cssH}px`;
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  const plotTop = 10;
+  const plotBottom = cssH - 22; // room for the time labels
+  const plotH = plotBottom - plotTop;
+  const xOf = (i) => PPG_STRIP_PAD + (i / fs) * PPG_STRIP_PX_PER_S;
+
+  // runs of real samples and the gaps between them
+  const runs = [];
+  const gaps = [];
+  for (let i = 0; i < values.length; ) {
+    const real = values[i] !== null;
+    let j = i;
+    while (j < values.length && (values[j] !== null) === real) j++;
+    (real ? runs : gaps).push([i, j]);
+    i = j;
+  }
+
+  // what the recording did not see
+  ctx.font = '600 11px Figtree, system-ui, sans-serif';
+  ctx.textBaseline = "alphabetic";
+  for (const [a, b] of gaps) {
+    ctx.fillStyle = withAlpha(colors.track, 0.6);
+    ctx.fillRect(xOf(a), plotTop, xOf(b) - xOf(a), plotH);
+    if (xOf(b) - xOf(a) > 80) {
+      ctx.fillStyle = colors.label;
+      ctx.textAlign = "center";
+      ctx.fillText("sin datos", (xOf(a) + xOf(b)) / 2, plotTop + plotH / 2 + 4);
+    }
+  }
+
+  // one line per second, a label every PPG_STRIP_LABEL_EVERY_S
+  ctx.save();
+  ctx.strokeStyle = colors.grid;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 4]);
+  for (let s = 0; s <= seconds; s++) {
+    const x = Math.round(xOf(s * fs)) + 0.5;
+    ctx.beginPath();
+    ctx.moveTo(x, plotTop);
+    ctx.lineTo(x, plotBottom);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(0, plotBottom + 0.5);
+  ctx.lineTo(cssW, plotBottom + 0.5);
+  ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle = colors.label;
+  ctx.textAlign = "center";
+  for (let s = 0; s <= seconds; s += PPG_STRIP_LABEL_EVERY_S) ctx.fillText(`${s} s`, xOf(s * fs), cssH - 5);
+
+  // vertical range: every real sample, with some air above and below
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const v of values) {
+    if (v === null) continue;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  if (!(hi > lo)) {
+    lo -= 1;
+    hi += 1;
+  }
+  const pad = (hi - lo) * 0.12;
+  lo -= pad;
+  hi += pad;
+  const yOf = (v) => plotBottom - ((v - lo) / (hi - lo)) * plotH;
+
+  const fill = ctx.createLinearGradient(0, plotTop, 0, plotBottom);
+  fill.addColorStop(0, withAlpha(colors.line, 0.2));
+  fill.addColorStop(1, withAlpha(colors.line, 0));
+  ctx.strokeStyle = colors.line;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  for (const [a, b] of runs) {
+    if (b - a < 2) continue; // a single sample is not a line
+    const line = new Path2D();
+    for (let i = a; i < b; i++) {
+      if (i === a) line.moveTo(xOf(i), yOf(values[i]));
+      else line.lineTo(xOf(i), yOf(values[i]));
+    }
+    const area = new Path2D(line);
+    area.lineTo(xOf(b - 1), plotBottom);
+    area.lineTo(xOf(a), plotBottom);
+    area.closePath();
+    ctx.fillStyle = fill;
+    ctx.fill(area);
+    ctx.stroke(line);
+  }
+  return seconds;
+}

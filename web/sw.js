@@ -5,7 +5,7 @@
 // WebSocket, or — for the cloud source — cross-origin requests to Firebase,
 // which the origin check below leaves alone).
 
-const CACHE_NAME = "pulsox-shell-v5";
+const CACHE_NAME = "pulsox-shell-v6";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
@@ -18,6 +18,7 @@ const SHELL_ASSETS = [
   "./js/history.js",
   "./js/cloud-config.js",
   "./js/cloud.js",
+  "./js/signal.js",
   "./js/charts.js",
   "./js/ppg.js",
   "./js/app.js",
