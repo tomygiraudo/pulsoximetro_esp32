@@ -130,7 +130,7 @@
 // needs the whole recording). The device does not compute their coefficients:
 // tools/gen_ppg_coefs.py reads these four values and the sample rate above, and writes
 // lib/ppg/ppg_coefs.h. Run it again after changing any of them.
-#define FILTER_ORDER 4             // order of each filter (the band-pass has twice the poles)
+#define FILTER_ORDER 2             // order of each filter (the band-pass has twice the poles)
 #define BAND_LOW_HZ 0.5f           // band-pass for the AC component
 #define BAND_HIGH_HZ 6.0f
 #define DC_CUTOFF_HZ 0.2f          // low-pass for the DC component
@@ -138,7 +138,7 @@
 // A second band-pass only to DRAW the pulse on the TFT, kept apart from the measuring one so
 // that the screen can be tuned without touching SpO2 or heart rate, which do not use it. For
 // now it has the same band and order as the measuring filter, so both see the same signal.
-#define VIEW_FILTER_ORDER 4
+#define VIEW_FILTER_ORDER 2
 #define VIEW_BAND_LOW_HZ 0.5f
 #define VIEW_BAND_HIGH_HZ 6.0f
 
