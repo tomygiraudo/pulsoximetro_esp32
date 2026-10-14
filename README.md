@@ -27,6 +27,7 @@ Links útiles del fabricante del MAX30102:
 https://www.analog.com/en/resources/reference-designs/maxrefdes117.html
 https://www.analog.com/en/resources/technical-articles/how-to-design-a-better-pulse-oximeter.html 
 https://www.analog.com/en/resources/technical-articles/guidelines-for-spo2-measurement--maxim-integrated.html
+https://www.scielo.cl/scielo.php?script=sci_arttext&pid=S0717-73482010000100010
 
 ## Hardware
 El esquemático del pulsioxímetro y todos sus componentes necesarios se detallan en PCB/Esquematico_V2.pdf/. Los archivos de diseño de la PCB se encuentran dentro de la misma carpeta. 
