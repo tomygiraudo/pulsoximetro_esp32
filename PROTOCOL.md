@@ -547,8 +547,8 @@ Armado de los paquetes y decisiones asociadas, a cerrar junto con el firmware:
       entrega como `hello.battery_pct`; la app lo acepta en cualquier `hello`.)
 - [x] **Cliente del ESP32 para la nube**: WiFi STA + TLS + login + keep-alive,
       integrado con el botón (GPIO0) y el deep sleep en
-      [`firmware/pulsox`](firmware/pulsox/README.md) (`src/cloud.cpp`,
-      `src/cloud_link.cpp`); sigue [`tools/cloud/fake_device.py`](tools/cloud/fake_device.py).
+      [`firmware/pulsox`](firmware/pulsox/README.md) (`src/cloud/cloud.cpp`,
+      `src/cloud/cloud_link.cpp`); sigue [`tools/cloud/fake_device.py`](tools/cloud/fake_device.py).
       Verificado en la placa, con el light sleep real y con el sueño simulado
       (entorno `dev`); el deep sleep depende de la placa del botón (ver el README
       del firmware).

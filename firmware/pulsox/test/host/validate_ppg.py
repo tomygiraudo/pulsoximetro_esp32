@@ -2,7 +2,7 @@
 """Checks the C pipeline (lib/ppg) against scipy and against tools/procesamiento.py.
 
 Input is a recording made with the pipeline in CSV mode, either on the board
-(tools/capture.py) or on the PC (tools/ppg_host.c):
+(tools/capture.py) or on the PC (test/host/ppg_host.c):
     <base>.csv          one row per sample  (n, red, ir, red_ac, ... , finger)
     <base>_results.csv  one row per second  (n, finger, spo2, ..., r, pi, ...)
 
@@ -21,7 +21,7 @@ Parameters (sample rate, filters, window) are read from include/config.h.
 Requirements: pip install numpy scipy pandas
 
 Usage, from firmware/pulsox:
-    python tools/validate_ppg.py <base> [<base> ...]
+    python test/host/validate_ppg.py <base> [<base> ...]
 """
 
 import argparse
@@ -33,7 +33,7 @@ import numpy as np
 import pandas as pd
 from scipy.signal import butter, filtfilt, sosfilt, sosfilt_zi
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 AC_TOL = 0.01        # counts: the stream prints the AC with 3 decimals, in float
 DC_TOL = 0.02        # counts: the DC (~1e5) is a float32 printed with 2 decimals
 R_TOL = 5e-5

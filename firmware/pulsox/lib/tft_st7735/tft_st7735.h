@@ -155,7 +155,7 @@
 //      una rotación distinta de 0, hay que recalibrar.
 //
 //  2.9 Qué todavía no está resuelto
-//    - Sueño con la pantalla: resuelto en src/display.cpp (displaySleep / displayWake /
+//    - Sueño con la pantalla: resuelto en src/display/display.cpp (displaySleep / displayWake /
 //      displayHoldPins): backlight apagado, DISPOFF + SLPIN, y en deep sleep los
 //      pines del backlight, CS y RESET retenidos (gpio_hold) para que no floten.
 //      Probado con el sueño simulado del entorno dev; falta medir el consumo en

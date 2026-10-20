@@ -1,13 +1,13 @@
-#include "power.h"
+#include "board/power.h"
 #include <Arduino.h>
 #include <driver/gpio.h>
 #include <esp_sleep.h>
-#include "button.h"
+#include "board/button.h"
 #include "config.h"
-#include "debug_log.h"
-#include "display.h"
-#include "serial_stream.h"
-#include "status_led.h"
+#include "debug/debug_log.h"
+#include "display/display.h"
+#include "debug/serial_stream.h"
+#include "board/status_led.h"
 
 void powerBegin() {
   gpio_deep_sleep_hold_dis();

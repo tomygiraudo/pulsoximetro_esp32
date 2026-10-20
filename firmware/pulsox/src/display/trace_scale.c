@@ -1,4 +1,4 @@
-#include "trace_scale.h"
+#include "display/trace_scale.h"
 #include <string.h>
 
 // Median of v[0..n) (n > 0), on a copy.

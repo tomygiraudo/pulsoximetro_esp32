@@ -1,6 +1,6 @@
-// Text format of the PPG stream, shared by the firmware (src/serial_stream.cpp, over
-// Serial) and by the host tool (tools/ppg_host.c, to files), so both produce the
-// same CSV and tools/validate_ppg.py reads either.
+// Text format of the PPG stream, shared by the firmware (src/debug/serial_stream.cpp, over
+// Serial) and by the host tool (test/host/ppg_host.c, to files), so both produce the
+// same CSV and test/host/validate_ppg.py reads either.
 //
 //   D  one line per sample
 //   R  one line per second, with the result of the pipeline

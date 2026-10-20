@@ -10,8 +10,8 @@
 #include <Arduino.h>
 #include <math.h>
 #include "config.h"
-#include "debug_log.h"
-#include "display.h"
+#include "debug/debug_log.h"
+#include "display/display.h"
 
 enum class Kind : uint8_t { MEASURING, NO_FINGER, CONNECTING, WAIT_FINGER, RESULT };
 

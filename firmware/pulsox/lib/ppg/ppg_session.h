@@ -1,6 +1,6 @@
 // Judges one measurement from the once-per-second output of the pipeline (ppg_processor.h):
 // when it is finished, with which result, or why it has to be discarded. Plain C, no Arduino
-// dependency, so tools/session_host.c can run it on the PC against recorded captures.
+// dependency, so test/host/session_host.c can run it on the PC against recorded captures.
 //
 // Per second (ppg_session_push):
 //   * finger gone for MEAS_FINGER_LOST_S seconds in a row     -> ABORTED, FINGER_LOST

@@ -19,10 +19,10 @@
 #define DISPLAY_PPG_INPUT_HZ SENSOR_FS_HZ
 #endif
 #include <driver/gpio.h>
-#include "display.h"
-#include "display_assets.h"
+#include "display/display.h"
+#include "display/display_assets.h"
 #include "tft_st7735.h"
-#include "trace_scale.h"
+#include "display/trace_scale.h"
 
 namespace {
 

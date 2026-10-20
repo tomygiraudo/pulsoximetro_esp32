@@ -45,7 +45,7 @@
 #endif
 #define BUTTON_STUCK_RETRY_S 60      // button still down after that wait: sleep on a timer instead
                                      // (a GPIO wakeup would fire at once and loop), and look again
-// How the device sleeps between measurements (src/power.cpp). All of them wake on GPIO0.
+// How the device sleeps between measurements (src/board/power.cpp). All of them wake on GPIO0.
 //   POWER_SLEEP_LIGHT  ~130 uA in the chip. The RAM is kept, so it resumes where it was and wakes in ms.
 //                      Works with the button board as it is: the pin is a plain input (no internal pull-up).
 //   POWER_SLEEP_DEEP   ~5 uA, but the Arduino SDK turns the internal pull-up (~18-45 kOhm) on in the wakeup

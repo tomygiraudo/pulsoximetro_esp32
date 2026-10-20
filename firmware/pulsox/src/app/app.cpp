@@ -1,29 +1,29 @@
 // The PulsOx application. See app.h for the states. Orchestration only: the sensor driver
 // lives in lib/max30102, the signal processing in lib/ppg (the pipeline and the judge of the
-// measurement), the screens in src/display.cpp, the network in src/cloud_link.cpp and the
-// sleep in src/power.cpp.
+// measurement), the screens in src/display/display.cpp, the network in src/cloud/cloud_link.cpp and the
+// sleep in src/board/power.cpp.
 //
 // While it measures it starts the MAX30102 at 100 samples/s, feeds every sample to the
 // pipeline (finger, filters, SpO2, heart rate), shows the result and the pulse trace on the
 // TFT, sends one `live` tick per second to Firebase, and prints one line per second with the
 // result and the sensor health (samples/s, last RED/IR, FIFO overflows, slowest screen
 // update). In CSV mode (send 'c') it also streams every sample with its filtered values, and
-// the result, for tools/capture.py and tools/validate_ppg.py.
-#include "app.h"
+// the result, for tools/capture.py and test/host/validate_ppg.py.
+#include "app/app.h"
 #include <Arduino.h>
 #include <Wire.h>
-#include "button.h"
-#include "cloud_link.h"
+#include "board/button.h"
+#include "cloud/cloud_link.h"
 #include "config.h"
-#include "debug_log.h"
-#include "display.h"
-#include "i2c_diag.h"
+#include "debug/debug_log.h"
+#include "display/display.h"
+#include "debug/i2c_diag.h"
 #include "max30102.h"
-#include "power.h"
+#include "board/power.h"
 #include "ppg_processor.h"
 #include "ppg_session.h"
-#include "serial_stream.h"
-#include "status_led.h"
+#include "debug/serial_stream.h"
+#include "board/status_led.h"
 
 enum class State : uint8_t { CONNECTING, WAIT_FINGER, MEASURING, CLOSING, RESULT, ERROR_SCREEN };
 

@@ -5,7 +5,7 @@
 // The loop task only posts commands (connect, start a session, finish, abort, disconnect)
 // and hands over one `live` tick per second; the cloud task does the I/O. Everything is
 // asynchronous: look at cloudLinkState() / cloudLinkBusy() to see how it went. The REST
-// calls and their order are PROTOCOL.md "Transporte en la nube" (src/cloud.cpp is the
+// calls and their order are PROTOCOL.md "Transporte en la nube" (src/cloud/cloud.cpp is the
 // client, ported from firmware/cloud-test).
 //
 //   cloudLinkConnect()      WiFi + login + PUT info + DELETE live   IDLE -> CONNECTING -> READY | OFFLINE
