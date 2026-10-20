@@ -1,7 +1,7 @@
-#include "button.h"
+#include "board/button.h"
 #include <Arduino.h>
 #include "config.h"
-#include "debug_log.h"
+#include "debug/debug_log.h"
 
 static bool stable = false;        // debounced level: true = down
 static bool lastRaw = false;

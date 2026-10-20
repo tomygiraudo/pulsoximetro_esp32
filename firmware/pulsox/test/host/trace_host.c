@@ -1,11 +1,11 @@
-// Compares the vertical scale of the pulse trace on the TFT, before and after src/trace_scale.c,
+// Compares the vertical scale of the pulse trace on the TFT, before and after src/display/trace_scale.c,
 // on a capture CSV, on the PC.
 //
 // Every sample goes through the real pipeline (lib/ppg), the trace is built as display.cpp
 // builds it (ir_view at 48 columns/s, a history of 118 columns) and every 40 ms, the frame rate
 // of the plot, two scales are computed side by side:
 //   antes  the old one: min and max of the whole window, widening at once, narrowing at 10 %
-//   ahora  the new one: src/trace_scale.c
+//   ahora  the new one: src/display/trace_scale.c
 // For each, the metric of a frame is the height in pixels with which the last second of trace
 // is drawn (clipped to the plot, as display.cpp does). A trace that fills the plot is ~28 px;
 // below FLAT_PX the wave is, to the eye, a flat line.
@@ -21,17 +21,17 @@
 //   --csv out.csv      one row per frame: t, both scales and both heights, to plot them
 //
 // Build, from firmware/pulsox (any C99 compiler; `python -m ziglang cc` works too):
-//   cc -O2 -std=c11 -Iinclude -Ilib/ppg -Isrc tools/trace_host.c src/trace_scale.c \
+//   cc -O2 -std=c11 -Iinclude -Ilib/ppg -Isrc test/host/trace_host.c src/display/trace_scale.c \
 //      lib/ppg/ppg_processor.c lib/ppg/sos_filter.c -lm -o trace_host
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "ppg_processor.h"
-#include "trace_scale.h"
+#include "display/trace_scale.h"
 
 #define LINE_MAX_LEN 512
 
-// The numbers of src/display.cpp and src/display.h.
+// The numbers of src/display/display.cpp and src/display/display.h.
 #define PLOT_COLS 118
 #define PLOT_ROWS 38
 #define PLOT_BASE_Y 33.0f

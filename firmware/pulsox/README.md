@@ -109,7 +109,7 @@ antirrebote lo hace el software (30 ms).
 
 Las pantallas siguen el diseño de `design-system/Pulsioxímetro WiFi · TFT 128×128.html`
 (fuente Barlow Semi Condensed y los íconos, rasterizados a máscaras de 4 bits).
-`src/display_assets.h` es **generado**: no se edita a mano, se cambia
+`src/display/display_assets.h` es **generado**: no se edita a mano, se cambia
 `tools/gen_display_assets.py` y se vuelve a correr (necesita `pillow`, `fonttools` y
 `brotli`; en un entorno virtual aparte, no hace falta instalarlos en PlatformIO).
 Los umbrales de alerta son los del diseño: ≥ 96 % normal, 93–95 % precaución,
@@ -117,17 +117,27 @@ Los umbrales de alerta son los del diseño: ≥ 96 % normal, 93–95 % precauci�
 
 ## Qué hay en cada carpeta
 
+En `src/` solo está `main.cpp` suelto; el resto va en una carpeta por lo que hace.
+
 | Ruta | Qué es |
 |---|---|
-| `src/app.cpp` | La máquina de estados de arriba. `main.cpp` solo llama a `appSetup()` / `appLoop()`. |
-| `src/cloud.cpp`, `src/cloud_link.cpp` | El cliente de Firebase (REST + TLS, de `cloud-test`) y la tarea que lo corre sin frenar el sensor. |
-| `src/power.cpp`, `src/button.cpp` | Light sleep / deep sleep (retención de pines, wakeup por GPIO0) y el botón. |
-| `src/display.cpp`, `lib/tft_st7735` | Las pantallas y el controlador. |
+| `src/main.cpp` | El punto de entrada: `setup()` / `loop()` solo llaman a `appSetup()` / `appLoop()`. |
+| `src/app/` | **La capa de aplicación.** `app.cpp` es la máquina de estados de arriba y orquesta todo lo demás. |
+| `src/display/` | Las pantallas TFT: `display.cpp`, la escala de la traza (`trace_scale.c`) y `display_assets.h` (generado). Usa el controlador de `lib/tft_st7735`. |
+| `src/cloud/` | La nube: el cliente de Firebase (`cloud.cpp`, REST + TLS, de `cloud-test`) y la tarea que lo corre sin frenar el sensor (`cloud_link.cpp`). |
+| `src/board/` | La placa: el botón (`button.cpp`), el LED de latido (`status_led.cpp`) y el sueño (`power.cpp`: light / deep sleep, retención de pines, wakeup por GPIO0). |
+| `src/debug/` | El puerto serie y el diagnóstico: el log `DBG()` (`debug_log.cpp`), el modo CSV y los comandos (`serial_stream.cpp`) y el diagnóstico del bus I2C (`i2c_diag.cpp`). |
 | `lib/max30102` | Driver del sensor (I2C, FIFO). |
 | `lib/ppg` | El procesamiento, en C puro: filtros, SpO₂, pulso, calidad (`ppg_processor`) y el juez de la medición (`ppg_session`). |
+| `lib/tft_st7735` | El controlador de la pantalla. |
 | `include/config.h` | **Todos los parámetros**: pines, sensor, filtros, tiempos, umbrales. |
+| `test/` | Lo que no es del firmware real: el demo de pantallas (`test/demo/`) y las pruebas de PC (`test/host/`). Ver abajo. |
+| `tools/` | Utilidades de PC: grabar capturas y generar archivos (ver abajo). |
 | `captures/` | Capturas crudas del sensor, para ajustar y validar el algoritmo. |
-| `tools/` | Herramientas de PC (ver abajo). |
+
+**Includes.** Los headers de `src/` se incluyen con su carpeta, también el propio
+(`#include "cloud/cloud_link.h"`): PlatformIO ya pone `src/` en el include path. Los de
+`lib/` e `include/` van sin carpeta (`"config.h"`, `"ppg_processor.h"`).
 
 ## Parámetros que se pueden ajustar
 
@@ -160,17 +170,27 @@ RED/IR, los desbordes del FIFO, las **muestras corruptas** que el driver reempla
 los fallos de I2C y el refresco de pantalla más lento. Si aparece `SATURADO` con el
 valor crudo muy por debajo del tope (262143), es un glitch del bus.
 
-## Herramientas (`tools/`)
+## Utilidades (`tools/`)
 
 | | |
 |---|---|
 | `capture.py` | Graba el CSV del dispositivo (modo `c`). `%USERPROFILE%\.platformio\penv\Scripts\python.exe tools\capture.py --port COM7 --seconds 60 --label dedo_quieto` |
-| `ppg_host.c` | Corre el pipeline en la PC sobre una captura. |
-| `session_host.c` | Corre el pipeline y el juez de la medición sobre una captura, con simulaciones de dedo retirado (`--finger-off S`), saturación (`--saturate S L`), ruido (`--noise S P`) y captura cortada (`--cut S`). Se compila con cualquier compilador de C99 (`python -m ziglang cc` sirve). |
-| `trace_host.c` | Compara la escala vertical de la traza de la pantalla (`src/trace_scale.c`) con la que había antes, sobre una captura: altura con la que se dibuja el último segundo, cuadros aplanados y columnas recortadas. Simula un golpe (`--spike S`) o un cambio de presión del dedo (`--press S PCT [LEN]`). Se compila con `python -m ziglang cc -O2 -std=c11 -Iinclude -Ilib/ppg -Isrc tools/trace_host.c src/trace_scale.c lib/ppg/ppg_processor.c lib/ppg/sos_filter.c -lm -o trace_host`. |
-| `validate_ppg.py` | Compara el pipeline en C con scipy y con `procesamiento.py`. |
+| `procesamiento.py` | El script de referencia (offline, con `filtfilt` y FFT) contra el que se compara el pipeline en C. |
 | `gen_ppg_coefs.py` | Genera `lib/ppg/ppg_coefs.h` desde `config.h`. Hay que correrlo si cambia la frecuencia de muestreo o un filtro. |
-| `gen_display_assets.py` | Genera `src/display_assets.h`. |
+| `gen_display_assets.py` | Genera `src/display/display_assets.h`. |
+
+## Demo y pruebas (`test/`)
+
+Nada de esto entra en el firmware real. El demo se carga en la placa con su propio entorno
+(`ui-demo`); las pruebas corren en la PC sobre las capturas de `captures/`.
+
+| | |
+|---|---|
+| `demo/display_demo.cpp` | El demo de pantallas (entorno `ui-demo`): recorre las 12 pantallas con datos falsos, sin sensor ni WiFi. |
+| `host/ppg_host.c` | Corre el pipeline de `lib/ppg` en la PC sobre una captura. |
+| `host/session_host.c` | Corre el pipeline y el juez de la medición sobre una captura, con simulaciones de dedo retirado (`--finger-off S`), saturación (`--saturate S L`), ruido (`--noise S P`) y captura cortada (`--cut S`). Se compila con cualquier compilador de C99 (`python -m ziglang cc` sirve). |
+| `host/trace_host.c` | Compara la escala vertical de la traza de la pantalla (`src/display/trace_scale.c`) con la que había antes, sobre una captura: altura con la que se dibuja el último segundo, cuadros aplanados y columnas recortadas. Simula un golpe (`--spike S`) o un cambio de presión del dedo (`--press S PCT [LEN]`). Se compila con `python -m ziglang cc -O2 -std=c11 -Iinclude -Ilib/ppg -Isrc test/host/trace_host.c src/display/trace_scale.c lib/ppg/ppg_processor.c lib/ppg/sos_filter.c -lm -o trace_host`. |
+| `host/validate_ppg.py` | Compara el pipeline en C con scipy y con `tools/procesamiento.py`. |
 
 ## Limitaciones conocidas
 

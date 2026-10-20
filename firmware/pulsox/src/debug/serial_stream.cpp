@@ -1,7 +1,7 @@
-#include "serial_stream.h"
+#include "debug/serial_stream.h"
 #include <Arduino.h>
-#include "button.h"
-#include "debug_log.h"
+#include "board/button.h"
+#include "debug/debug_log.h"
 #include "ppg_csv.h"
 
 static StreamMode mode = StreamMode::SUMMARY;

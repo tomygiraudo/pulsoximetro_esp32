@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Generates src/display_assets.h: the fonts and icons of the TFT screens.
+"""Generates src/display/display_assets.h: the fonts and icons of the TFT screens.
 
 The firmware draws the screens from the design in
 design-system/Pulsioximetro WiFi · TFT 128x128.html. That design uses Barlow Semi
 Condensed and a handful of SVG icons, none of which the Adafruit GFX built-in font
 can reproduce. This script turns them into anti-aliased 4-bit alpha masks that
-src/display.cpp blends over the frame buffer.
+src/display/display.cpp blends over the frame buffer.
 
   * Fonts: the woff2 files are embedded in the design file itself, so the result
     matches the mockups and no download is needed. Only the characters the screens
@@ -40,7 +40,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DESIGN = ROOT.parent.parent / "design-system" / "Pulsioxímetro WiFi · TFT 128×128.html"
-DEFAULT_OUT = ROOT / "src" / "display_assets.h"
+DEFAULT_OUT = ROOT / "src" / "display" / "display_assets.h"
 
 TEXT_SS = 8    # supersampling factor for glyphs
 # Light-on-dark text blended in sRGB looks thinner than the mockup, which the browser

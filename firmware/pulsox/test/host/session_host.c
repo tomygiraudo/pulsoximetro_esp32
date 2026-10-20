@@ -14,7 +14,7 @@
 //   --cut S          the capture ends S seconds after the start (a measurement cut short)
 //
 // Build, from firmware/pulsox (any C99 compiler; `python -m ziglang cc` works too):
-//   cc -O2 -std=c11 -Iinclude -Ilib/ppg tools/session_host.c lib/ppg/ppg_session.c \
+//   cc -O2 -std=c11 -Iinclude -Ilib/ppg test/host/session_host.c lib/ppg/ppg_session.c \
 //      lib/ppg/ppg_processor.c lib/ppg/sos_filter.c -lm -o session_host
 #include <stdio.h>
 #include <stdlib.h>

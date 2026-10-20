@@ -1,4 +1,4 @@
-#include "debug_log.h"
+#include "debug/debug_log.h"
 #include <esp_system.h>
 
 static const char *resetReasonText(esp_reset_reason_t r) {

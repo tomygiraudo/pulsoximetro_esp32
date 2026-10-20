@@ -1,9 +1,9 @@
-#include "cloud.h"
+#include "cloud/cloud.h"
 
 #include <WiFi.h>
 
 #include "config.h"
-#include "debug_log.h"
+#include "debug/debug_log.h"
 #include "root_ca.h"
 #include "secrets.h"
 

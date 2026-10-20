@@ -1,11 +1,11 @@
-#include "cloud_link.h"
+#include "cloud/cloud_link.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <atomic>
 #include <math.h>
 #include <stdarg.h>
-#include "cloud.h"
-#include "debug_log.h"
+#include "cloud/cloud.h"
+#include "debug/debug_log.h"
 
 namespace {
 

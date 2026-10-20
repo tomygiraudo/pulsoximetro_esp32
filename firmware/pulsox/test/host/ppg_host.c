@@ -4,13 +4,13 @@
 // tools/capture.py would record from the board in CSV mode:
 //   <out>.csv          one row per sample   (header: PPG_CSV_D_HEADER)
 //   <out>_results.csv  one row per second   (header: PPG_CSV_R_HEADER)
-// so tools/validate_ppg.py reads the result of the host and of the board alike.
+// so test/host/validate_ppg.py reads the result of the host and of the board alike.
 //
 // The input needs columns named n, red and ir (what capture.py wrote before the
 // pipeline existed, e.g. captures/pulgar_V4.csv).
 //
 // Build, from firmware/pulsox (any C99 compiler; `python -m ziglang cc` works too):
-//   cc -O2 -std=c11 -Iinclude -Ilib/ppg tools/ppg_host.c lib/ppg/ppg_processor.c \
+//   cc -O2 -std=c11 -Iinclude -Ilib/ppg test/host/ppg_host.c lib/ppg/ppg_processor.c \
 //      lib/ppg/sos_filter.c lib/ppg/ppg_csv.c -lm -o ppg_host
 // Run:
 //   ./ppg_host captures/pulgar_V4.csv /tmp/pulgar_V4_host

@@ -15,7 +15,7 @@
 //     index < 34   ->  0                      (invalid, see 1)
 //     v >= 99.85   ->  100                    (see 2)
 //     otherwise    ->  min(99, floor(v + 0.5))
-// tools/validate_ppg.py recomputes the table from this rule and fails if it differs.
+// test/host/validate_ppg.py recomputes the table from this rule and fails if it differs.
 //
 // 1. R below the maximum of the curve is invalid.
 //    The parabola peaks at R = 0.3368 (99.957 %) and falls on both sides, but the physical

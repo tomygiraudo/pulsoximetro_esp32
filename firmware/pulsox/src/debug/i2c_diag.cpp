@@ -1,8 +1,8 @@
-#include "i2c_diag.h"
+#include "debug/i2c_diag.h"
 #include <Arduino.h>
 #include <Wire.h>
 #include "config.h"
-#include "debug_log.h"
+#include "debug/debug_log.h"
 #include "max30102.h"
 #include "max30102_regs.h"
 

@@ -1,5 +1,5 @@
-// Vertical scale of the pulse trace on the TFT (src/display.cpp). Plain C, no Arduino
-// dependency, so tools/trace_host.c can run it on the PC against recorded captures.
+// Vertical scale of the pulse trace on the TFT (src/display/display.cpp). Plain C, no Arduino
+// dependency, so test/host/trace_host.c can run it on the PC against recorded captures.
 //
 // The scale used to be the min and max of the whole trace window (2.5 s). A single glitch or a
 // finger movement puts a spike of thousands of counts in a trace whose pulse is a few hundred:
@@ -36,7 +36,7 @@ extern "C" {
 #endif
 // The scale is this much wider than the typical span, so that the beats a bit taller than the
 // typical one still fit instead of being clipped flat at the edge of the plot. Measured on the
-// captures with tools/trace_host.c: 1.1 clips noisy captures too often (up to 3 % of the columns),
+// captures with test/host/trace_host.c: 1.1 clips noisy captures too often (up to 3 % of the columns),
 // 1.2 or more makes the wave about 10 % smaller than the old scale drew it.
 #ifndef TRACE_SCALE_HEADROOM
 #define TRACE_SCALE_HEADROOM 1.15f
