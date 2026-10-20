@@ -65,6 +65,17 @@ class Params:
         tbl = (ROOT / "lib" / "ppg" / "spo2_table.h").read_text(encoding="utf-8")
         body = re.search(r"SPO2_TABLE\[SPO2_TABLE_SIZE\]\s*=\s*\{(.*?)\};", tbl, re.S).group(1)
         self.table = np.array([int(v) for v in re.findall(r"\d+", body)])
+        self.table_idx_min = int(define(tbl, "SPO2_TABLE_IDX_MIN"))
+
+
+def expected_table(n: int) -> np.ndarray:
+    """The table lib/ppg/spo2_table.h documents, rebuilt from the quadratic."""
+    r = np.arange(n) / 100
+    v = -45.060 * r**2 + 30.354 * r + 94.845
+    t = np.minimum(np.floor(v + 0.5), 99)  # nearest integer, but never 100 by rounding
+    t[v >= 99.85] = 100                    # 100 only where the curve is within 0.15 of it
+    t[:np.argmax(v)] = 0                   # below the maximum of the curve: invalid
+    return t.astype(int)
 
 
 def causal(sos, x):
@@ -161,10 +172,13 @@ def main() -> None:
     ap.add_argument("base", nargs="+", type=Path, help="path without .csv / _results.csv")
     args = ap.parse_args()
     p = Params()
-    dev = np.abs(p.table - np.round(-45.060 * (np.arange(len(p.table)) / 100) ** 2
-                                    + 30.354 * (np.arange(len(p.table)) / 100) + 94.845)).max()
-    print(f"tabla SpO2: {len(p.table)} valores, difiere de la cuadratica redondeada en {dev:.0f} como maximo")
-    results = [check(b, p) for b in args.base]
+    bad = np.flatnonzero(p.table != expected_table(len(p.table)))
+    idx_ok = p.table_idx_min == int(np.argmax(p.table))
+    print(f"tabla SpO2: {len(p.table)} valores, " +
+          ("coincide con la regla de spo2_table.h" if not len(bad) else
+           f"DIFIERE de la regla de spo2_table.h en {len(bad)} indices (el primero, {bad[0]})") +
+          f"; SPO2_TABLE_IDX_MIN = {p.table_idx_min} " + ("(es el maximo de la tabla)" if idx_ok else "NO ES el maximo de la tabla"))
+    results = [not len(bad) and idx_ok] + [check(b, p) for b in args.base]
     print("\nRESULTADO:", "todo OK" if all(results) else "HAY FALLAS")
     sys.exit(0 if all(results) else 1)
 

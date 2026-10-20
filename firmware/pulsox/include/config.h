@@ -164,7 +164,8 @@
 // ---- SpO2 ----------------------------------------------------------------------------
 // R = (AC_red / DC_red) / (AC_ir / DC_ir), with AC the RMS of the band-passed signal
 // and DC the mean of the low-passed one, both over the last SPO2_WINDOW_S seconds.
-// SpO2 = spo2_table[round(R * 100)] (lib/ppg/spo2_table.h, Maxim reference table).
+// SpO2 = spo2_table[round(R * 100)] (lib/ppg/spo2_table.h: Maxim's quadratic, with R < 0.335
+// invalid and 100 % only from 99.85 %; see the header).
 // UNCALIBRATED for this sensor/housing: values are indicative only.
 #define SPO2_WINDOW_S 10           // whole seconds; the result is refreshed once per second.
                                    // Longer = steadier R but slower to follow a real change

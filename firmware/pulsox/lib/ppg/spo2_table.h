@@ -1,17 +1,38 @@
 // SpO2 lookup table, indexed by round(R * 100), R being the "ratio of ratios"
 // (AC_red / DC_red) / (AC_ir / DC_ir).
 //
-// Taken from algorithm.h of the Maxim Integrated MAXREFDES117# reference design.
-// It is exactly the quadratic -45.060 R^2 + 30.354 R + 94.845 rounded to integers
-// (tools/validate_ppg.py checks it), tabulated so the device does no floating-point
-// math for this step. Maxim declares uch_spo2_table[184] but lists 183 values (the
-// last element is the implicit 0); only the 183 listed ones are kept here.
+// Derived from the table in algorithm.h of the Maxim Integrated MAXREFDES117# reference
+// design, which is the quadratic
+//     SpO2(R) = -45.060 R^2 + 30.354 R + 94.845
+// rounded to integers (half up) and tabulated so the device does no floating-point math
+// for this step. Maxim declares uch_spo2_table[184] but lists 183 values (the last element
+// is the implicit 0); only the 183 listed ones are kept here (R up to 1.82, where the
+// quadratic reaches 0). This copy differs from Maxim's in the two ways described below.
 //
 // UNCALIBRATED for this sensor and housing: the values are indicative only.
 //
-// The table is not monotonic: it is 100 % for R between 0.24 and 0.43, falls from
-// there as R grows, and also falls (towards 95 %) as R drops below 0.24. Only the
-// part above R = 0.43 is physiological.
+// Rule used to generate the table (r = index / 100, v = the quadratic at r):
+//     index < 34   ->  0                      (invalid, see 1)
+//     v >= 99.85   ->  100                    (see 2)
+//     otherwise    ->  min(99, floor(v + 0.5))
+// tools/validate_ppg.py recomputes the table from this rule and fails if it differs.
+//
+// 1. R below the maximum of the curve is invalid.
+//    The parabola peaks at R = 0.3368 (99.957 %) and falls on both sides, but the physical
+//    relation is monotonic: SpO2 does not drop as R drops. Maxim's table keeps that left
+//    branch (it falls from 100 % at R = 0.24 to 95 % at R = 0), which is only an artefact of
+//    fitting a parabola. Here the table starts at its own maximum, index 34 (R = 0.34,
+//    99.956 %): indices 0-33 hold 0 and SPO2_TABLE_IDX_MIN keeps them from being read, so
+//    R < 0.335 gives no SpO2. (Anything below 80 % is also rejected, by SPO2_MIN_VALID in
+//    config.h.)
+//
+// 2. 100 % only where the quadratic is within 0.15 of it (v >= 99.85).
+//    The curve never reaches 100 (its maximum is 99.957): Maxim's 100s are just the rounding
+//    of every v >= 99.5, indices 24-43. Here 100 is kept for indices 34-38 (R 0.34-0.38,
+//    v from 99.96 down to 99.87) and indices 39-43 (v 99.83 down to 99.57) become 99.
+//    Every other value is rounded to the nearest integer, as Maxim does, so from index 52
+//    on the table is Maxim's. Side effect: 99 covers v in [98.5, 99.85), indices 39-51,
+//    which is wider than the one-point range of the other values.
 //
 // Original notice:
 //
@@ -48,12 +69,12 @@
 #include <stdint.h>
 
 #define SPO2_TABLE_SIZE 183
-#define SPO2_TABLE_IDX_MIN 3  // Maxim only trusts the table for 2 < index < 184
+#define SPO2_TABLE_IDX_MIN 34  // first valid index: the maximum of the curve (R = 0.34)
 
 static const uint8_t SPO2_TABLE[SPO2_TABLE_SIZE] = {
-    95,  95,  95,  96,  96,  96,  97,  97,  97,  97,  97,  98,  98,  98,  98,  98,  99,  99,  99,  99,
-    99,  99,  99,  99,  100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
-    100, 100, 100, 100, 99,  99,  99,  99,  99,  99,  99,  99,  98,  98,  98,  98,  98,  98,  97,  97,
+    0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+    0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   100, 100, 100, 100, 100, 99,
+    99,  99,  99,  99,  99,  99,  99,  99,  99,  99,  99,  99,  98,  98,  98,  98,  98,  98,  97,  97,
     97,  97,  96,  96,  96,  96,  95,  95,  95,  94,  94,  94,  93,  93,  93,  92,  92,  92,  91,  91,
     90,  90,  89,  89,  89,  88,  88,  87,  87,  86,  86,  85,  85,  84,  84,  83,  82,  82,  81,  81,
     80,  80,  79,  78,  78,  77,  76,  76,  75,  74,  74,  73,  72,  72,  71,  70,  69,  69,  68,  67,
