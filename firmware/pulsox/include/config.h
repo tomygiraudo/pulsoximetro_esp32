@@ -111,8 +111,8 @@
 #define SENSOR_FS_HZ 50.0f
 #define SENSOR_FIFO_CONFIG 0x70   // SMP_AVE=8, rollover on (TEST: was 0x50, SMP_AVE=4)
 #define SENSOR_SPO2_CONFIG 0x2F   // ADC_RGE=4096 nA, SR=400 sps, LED_PW=411 us (18 bit)
-#define SENSOR_LED_RED_PA 0x24    // 36 * 0.2 mA ~ 7 mA
-#define SENSOR_LED_IR_PA 0x24
+#define SENSOR_LED_RED_PA 0x4B    // 75 * 0.2 mA = 15 mA (was 0x24, 7.2 mA)
+#define SENSOR_LED_IR_PA 0x32     // 50 * 0.2 mA = 10 mA (was 0x24)
 #define SENSOR_ADC_MAX 262143.0f  // 2^18 - 1
 
 #define I2C_CLOCK_HZ 400000
