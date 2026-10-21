@@ -167,6 +167,9 @@ static void evaluate_spo2(PpgProcessor *p) {
   o->spo2_valid = false;
   o->r_ratio = 0.0f;
   o->perfusion_index = 0.0f;
+  o->perfusion_index_red = 0.0f;
+  o->ac_rms_ir = 0.0f;
+  o->ac_rms_red = 0.0f;
   if (!p->finger || p->settle_left > 0 || p->w_count < PPG_WINDOW_N) return;
 
   double ac2_red = 0, ac2_ir = 0, dc_red = 0, dc_ir = 0;
@@ -184,6 +187,9 @@ static void evaluate_spo2(PpgProcessor *p) {
   double r = (rms_red / dc_red) / (rms_ir / dc_ir);
   o->r_ratio = (float)r;
   o->perfusion_index = (float)(100.0 * rms_ir / dc_ir);
+  o->perfusion_index_red = (float)(100.0 * rms_red / dc_red);
+  o->ac_rms_ir = (float)rms_ir;
+  o->ac_rms_red = (float)rms_red;
 
   int idx = (int)(r * 100.0 + 0.5);
   bool in_table = idx >= SPO2_TABLE_IDX_MIN && idx < SPO2_TABLE_SIZE;

@@ -94,7 +94,7 @@
 #define CLOUD_FORCE_OFFLINE 0          // 1 (env `dev-offline`): never connects, to test the "measure without sending" path
 #endif
 #define CLOUD_TASK_STACK 12288         // bytes: the TLS handshake needs well over the 8 KB of the loop task
-#define CLOUD_PPG_FS 50                // samples/s in `live.ppg`: the 100 sps view trace, averaged in pairs
+#define CLOUD_PPG_FS 50                // samples/s in `live.ppg`: the view trace (it has to divide SENSOR_FS_HZ)
 #define CLOUD_CLOSE_TIMEOUT_MS 10000   // before sleeping: longest wait for the cloud to finish what it is doing
 
 // ---- Runtime ------------------------------------------------------------------
@@ -105,17 +105,18 @@
 #define STATS_PERIOD_MS 1000         // period of the summary line
 
 // ---- MAX30102 setup ---------------------------------------------------------
-// 400 sps with 4-sample averaging -> 100 samples/s. The 25 Hz of peripherals-test
-// is too coarse to measure beat-to-beat intervals.
-#define SENSOR_FS_HZ 100.0f
-#define SENSOR_FIFO_CONFIG 0x50   // SMP_AVE=4, rollover on
+// 400 sps with 8-sample averaging -> 50 samples/s (TEST: it was 4-sample averaging and 100
+// samples/s). The 25 Hz of peripherals-test is too coarse to measure beat-to-beat intervals.
+// The filters in lib/ppg/ppg_coefs.h are for this rate: run tools/gen_ppg_coefs.py if it changes.
+#define SENSOR_FS_HZ 50.0f
+#define SENSOR_FIFO_CONFIG 0x70   // SMP_AVE=8, rollover on (TEST: was 0x50, SMP_AVE=4)
 #define SENSOR_SPO2_CONFIG 0x2F   // ADC_RGE=4096 nA, SR=400 sps, LED_PW=411 us (18 bit)
 #define SENSOR_LED_RED_PA 0x24    // 36 * 0.2 mA ~ 7 mA
 #define SENSOR_LED_IR_PA 0x24
 #define SENSOR_ADC_MAX 262143.0f  // 2^18 - 1
 
 #define I2C_CLOCK_HZ 400000
-#define POLL_INTERVAL_MS 10       // the 32-sample FIFO holds 320 ms of data at 100 sps
+#define POLL_INTERVAL_MS 10       // the 32-sample FIFO holds 640 ms of data at 50 sps
 
 // ---- Finger detection and saturation -----------------------------------------
 #define FINGER_ON_IR_DC 50000.0f   // DC of IR above this -> finger present

@@ -3,7 +3,7 @@
 // measurement), the screens in src/display/display.cpp, the network in src/cloud/cloud_link.cpp and the
 // sleep in src/board/power.cpp.
 //
-// While it measures it starts the MAX30102 at 100 samples/s, feeds every sample to the
+// While it measures it starts the MAX30102 at SENSOR_FS_HZ samples/s, feeds every sample to the
 // pipeline (finger, filters, SpO2, heart rate), shows the result and the pulse trace on the
 // TFT, sends one `live` tick per second to Firebase, and prints one line per second with the
 // result and the sensor health (samples/s, last RED/IR, FIFO overflows, slowest screen
@@ -59,13 +59,17 @@ static PpgSample lastSample = {0, 0};
 static uint16_t samplesInWindow = 0;
 static uint32_t statsAt = 0;
 static uint32_t displayWorstUs = 0;  // slowest displayUpdate() since the last LIVE line
+static float livePiIr = 0.0f;        // PI and AC (counts) of each channel in the latest pipeline result, for the LIVE line
+static float livePiRed = 0.0f;
+static float liveAcIr = 0.0f;
+static float liveAcRed = 0.0f;
 
 static bool fingerPresent = false;   // the pipeline's verdict on the latest sample
 static bool fingerShown = false;     // what the measuring screen says: measuring (true) or "no finger"
 
 static bool closingToResult = false; // CLOSING: it ends in RESULT (true) or ERROR_SCREEN (false)
 
-// One second of the pulse trace for the cloud: the 100 sps view trace averaged in pairs.
+// One second of the pulse trace for the cloud: the view trace, decimated to CLOUD_PPG_FS.
 static_assert(PPG_FS % CLOUD_PPG_FS == 0, "CLOUD_PPG_FS has to divide the sensor rate");
 static int16_t tickPpg[CLOUD_PPG_FS];
 static uint8_t tickPpgN = 0;
@@ -303,6 +307,10 @@ static void pollSensor() {
     if (refreshed) {
       const PpgOutput &o = *ppg_output(&ppg);
       streamResult(sampleIndex, o);
+      livePiIr = o.perfusion_index;
+      livePiRed = o.perfusion_index_red;
+      liveAcIr = o.ac_rms_ir;
+      liveAcRed = o.ac_rms_red;
       printResult(o);
       if (state == State::MEASURING) {
         showResult(o);
@@ -319,8 +327,9 @@ static void pollSensor() {
 static void printStats() {
   if (millis() - statsAt < STATS_PERIOD_MS) return;
   statsAt += STATS_PERIOD_MS;
-  DBG("LIVE", "%u muestras/s | red=%lu ir=%lu | overflows=%lu corruptas=%lu | fallos I2C=%u | pantalla max %lu us",
+  DBG("LIVE", "%u muestras/s | red=%lu ir=%lu | PI ir=%.3f%% red=%.3f%% | AC ir=%.1f red=%.1f | overflows=%lu corruptas=%lu | fallos I2C=%u | pantalla max %lu us",
       samplesInWindow, (unsigned long)lastSample.red, (unsigned long)lastSample.ir,
+      (double)livePiIr, (double)livePiRed, (double)liveAcIr, (double)liveAcRed,
       (unsigned long)sensor.overflowCount(), (unsigned long)sensor.corruptCount(), i2cFails,
       (unsigned long)displayWorstUs);
   samplesInWindow = 0;
