@@ -20,9 +20,30 @@ _Static_assert(PPG_BP_SECTIONS <= SOS_MAX_SECTIONS && PPG_LP_SECTIONS <= SOS_MAX
 
 // ---- Beat detection and heart rate -----------------------------------------------
 
+/*******************************************************************************
+ * @brief       Borra el estado del detector de latidos.
+ *
+ * @details     Pone en cero toda la estructura PpgBeat con memset: envolvente,
+ *              excursión actual e historial de intervalos RR.
+ *
+ * @param       Salida:  b - estado del detector, puesto en cero.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static void beat_reset(PpgBeat *b) { memset(b, 0, sizeof(*b)); }
 
-// Median of the accepted RR intervals (rr_n > 0).
+/*******************************************************************************
+ * @brief       Calcula la mediana de los intervalos RR aceptados.
+ *
+ * @details     Copia los rr_n valores del anillo rr[], los ordena por inserción
+ *              y toma el del medio (o el promedio de los dos centrales).
+ *              Requiere rr_n > 0.
+ *
+ * @param       Entrada: b - estado de latidos (rr[] y rr_n).
+ *              Salida:  retorno (float) - mediana de los RR, en segundos.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static float rr_median(const PpgBeat *b) {
   float s[BPM_MEDIAN_N];
   int n = b->rr_n;
@@ -39,6 +60,19 @@ static float rr_median(const PpgBeat *b) {
   return (n & 1) ? s[n / 2] : 0.5f * (s[n / 2 - 1] + s[n / 2]);
 }
 
+/*******************************************************************************
+ * @brief       Guarda un intervalo RR aceptado en los dos anillos de historial.
+ *
+ * @details     Lo escribe en rr[] (BPM_MEDIAN_N, para la mediana y la validez)
+ *              y en rr_avg[] (BPM_AVG_N, para el promedio del BPM), avanzando
+ *              cada cabeza hasta llenar el anillo.
+ *
+ * @param       Entrada: rr - intervalo entre dos latidos, en segundos.
+ *              Salida:  b - actualiza rr[], rr_head, rr_n, rr_avg[], avg_head y
+ *                       avg_n.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static void rr_push(PpgBeat *b, float rr) {
   b->rr[b->rr_head] = rr;
   b->rr_head = (uint8_t)((b->rr_head + 1) % BPM_MEDIAN_N);
@@ -48,14 +82,40 @@ static void rr_push(PpgBeat *b, float rr) {
   if (b->avg_n < BPM_AVG_N) b->avg_n++;
 }
 
-// Mean of the accepted RR intervals of the long ring (avg_n > 0).
+/*******************************************************************************
+ * @brief       Calcula el promedio de los RR aceptados del anillo largo.
+ *
+ * @details     Suma los avg_n valores de rr_avg[] y divide por avg_n: el BPM
+ *              sale de este promedio. Requiere avg_n > 0.
+ *
+ * @param       Entrada: b - estado de latidos (rr_avg[] y avg_n).
+ *              Salida:  retorno (float) - RR medio, en segundos.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static float rr_avg_mean(const PpgBeat *b) {
   float sum = 0.0f;
   for (int i = 0; i < b->avg_n; i++) sum += b->rr_avg[i];
   return sum / b->avg_n;
 }
 
-// A beat whose IR AC peak was at sample `peak_n`. Returns true if it counts as a beat.
+/*******************************************************************************
+ * @brief       Registra un latido candidato y dice si cuenta como latido.
+ *
+ * @details     Lo descarta si llega antes de BEAT_REFRACTORY_S del anterior
+ *              (onda dicrótica o ruido). Si el RR está en rango y a menos de
+ *              RR_MAX_DEVIATION de la mediana lo guarda con rr_push(); tras
+ *              RR_MAX_REJECTS rechazos seguidos olvida el historial.
+ *
+ * @param       Entrada: peak_n - índice de muestra del pico del IR AC.
+ *              Entrada: b - estado de latidos (último latido, historial de RR).
+ *              Salida:  retorno (bool) - false si cae en el período
+ *                       refractario; true si cuenta.
+ *              Salida:  b - actualiza last_beat_n, have_last, rejects y los
+ *                       anillos de RR.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static bool beat_register(PpgBeat *b, uint32_t peak_n) {
   if (b->have_last) {
     uint32_t d = peak_n - b->last_beat_n;
@@ -87,7 +147,24 @@ static bool beat_register(PpgBeat *b, uint32_t peak_n) {
   return true;
 }
 
-// One sample of the IR AC. `ir_dc` sets the floor of the threshold.
+/*******************************************************************************
+ * @brief       Procesa una muestra del IR AC con el detector de latidos.
+ *
+ * @details     Actualiza la envolvente de picos (decae con BEAT_ENV_TAU_S) y el
+ *              umbral BEAT_THRESHOLD_K * envolvente, con piso en
+ *              BEAT_MIN_AMP_PCT % del DC. Sigue el máximo de cada excursión
+ *              sobre el umbral y, al bajar de él, lo declara latido.
+ *
+ * @param       Entrada: x - muestra del IR AC (filtrada e invertida).
+ *              Entrada: ir_dc - DC del IR: fija el piso del umbral.
+ *              Entrada: p->n - índice de la muestra actual.
+ *              Salida:  p->beat - envolvente, excursión actual e historial de
+ *                       RR.
+ *              Salida:  p->dbg - beat_thr (umbral) y beat (hubo latido en esta
+ *                       muestra).
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static void beat_update(PpgProcessor *p, float x, float ir_dc) {
   PpgBeat *b = &p->beat;
   b->env = (x > b->env) ? x : b->env * ENV_DECAY;
@@ -114,7 +191,18 @@ static void beat_update(PpgProcessor *p, float x, float ir_dc) {
 
 // ---- Output ----------------------------------------------------------------------
 
-// Coefficient of variation of the accepted RR intervals (rr_n > 0).
+/*******************************************************************************
+ * @brief       Calcula el coeficiente de variación de los RR aceptados.
+ *
+ * @details     Desvío estándar de rr[] dividido por su media: mide cuán
+ *              irregulares son los latidos. Requiere rr_n > 0.
+ *
+ * @param       Entrada: b - estado de latidos (rr[] y rr_n).
+ *              Salida:  retorno (float) - coeficiente de variación (sin
+ *                       unidad).
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static float rr_cv(const PpgBeat *b) {
   float mean = 0.0f, var = 0.0f;
   for (int i = 0; i < b->rr_n; i++) mean += b->rr[i];
@@ -123,6 +211,19 @@ static float rr_cv(const PpgBeat *b) {
   return sqrtf(var / b->rr_n) / mean;
 }
 
+/*******************************************************************************
+ * @brief       Calcula el BPM y si es confiable, a partir de los RR aceptados.
+ *
+ * @details     BPM = 60 / promedio de rr_avg[]. Sin RR, o sin latido hace más
+ *              de RR_MAX_S, no informa nada. Es válido con al menos
+ *              BPM_VALID_MIN_RR intervalos y un coeficiente de variación <=
+ *              BPM_VALID_MAX_CV.
+ *
+ * @param       Entrada: p->beat, p->n - historial de latidos y muestra actual.
+ *              Salida:  p->out - bpm y bpm_valid.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static void evaluate_heart_rate(PpgProcessor *p) {
   const PpgBeat *b = &p->beat;
   PpgOutput *o = &p->out;
@@ -137,8 +238,21 @@ static void evaluate_heart_rate(PpgProcessor *p) {
   o->bpm_valid = rr_cv(b) <= BPM_VALID_MAX_CV;
 }
 
-// How much the result can be trusted: a strong pulse (perfusion index) that beats regularly.
-// Needs the output of evaluate_spo2() (perfusion index) and the beat history.
+/*******************************************************************************
+ * @brief       Calcula un índice de calidad de 0 a 1: pulso fuerte que late con
+ *              regularidad.
+ *
+ * @details     Es el producto de q_pi (índice de perfusión sobre
+ *              QUALITY_PI_GOOD_PCT, tope 1; 0 si pasa de QUALITY_PI_MAX_PCT) y
+ *              q_rr (1 - CV / QUALITY_CV_BAD; 0,5 con menos de 3 RR). Es 0 sin
+ *              dedo o saturado. Usa el resultado de evaluate_spo2().
+ *
+ * @param       Entrada: p->out - finger, saturated y perfusion_index.
+ *              Entrada: p->beat, p->n - historial de latidos y muestra actual.
+ *              Salida:  p->out.quality - calidad, de 0 a 1.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static void evaluate_quality(PpgProcessor *p) {
   const PpgBeat *b = &p->beat;
   PpgOutput *o = &p->out;
@@ -161,12 +275,33 @@ static void evaluate_quality(PpgProcessor *p) {
   o->quality = q_pi * q_rr;
 }
 
+/*******************************************************************************
+ * @brief       Calcula SpO2, la relación R y los índices de perfusión de la
+ *              ventana.
+ *
+ * @details     Con la ventana de SPO2_WINDOW_S s llena, saca el RMS del AC y la
+ *              media del DC de cada canal, R = (RMS_red / DC_red) / (RMS_ir /
+ *              DC_ir) y SpO2 = SPO2_TABLE[round(R * 100)]. Válido sin
+ *              saturación, con PI >= SPO2_MIN_PI_PCT y SpO2 >= SPO2_MIN_VALID.
+ *
+ * @param       Entrada: p->w_ac2_*, p->w_dc_*, p->w_count - ventana deslizante
+ *                       de AC^2 y DC.
+ *              Entrada: p->finger, p->settle_left - sin dedo o asentando no se
+ *                       calcula.
+ *              Salida:  p->out - spo2, spo2_valid, r_ratio, índices de
+ *                       perfusión y RMS de cada canal.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static void evaluate_spo2(PpgProcessor *p) {
   PpgOutput *o = &p->out;
   o->spo2 = 0.0f;
   o->spo2_valid = false;
   o->r_ratio = 0.0f;
   o->perfusion_index = 0.0f;
+  o->perfusion_index_red = 0.0f;
+  o->ac_rms_ir = 0.0f;
+  o->ac_rms_red = 0.0f;
   if (!p->finger || p->settle_left > 0 || p->w_count < PPG_WINDOW_N) return;
 
   double ac2_red = 0, ac2_ir = 0, dc_red = 0, dc_ir = 0;
@@ -184,6 +319,9 @@ static void evaluate_spo2(PpgProcessor *p) {
   double r = (rms_red / dc_red) / (rms_ir / dc_ir);
   o->r_ratio = (float)r;
   o->perfusion_index = (float)(100.0 * rms_ir / dc_ir);
+  o->perfusion_index_red = (float)(100.0 * rms_red / dc_red);
+  o->ac_rms_ir = (float)rms_ir;
+  o->ac_rms_red = (float)rms_red;
 
   int idx = (int)(r * 100.0 + 0.5);
   bool in_table = idx >= SPO2_TABLE_IDX_MIN && idx < SPO2_TABLE_SIZE;
@@ -194,6 +332,20 @@ static void evaluate_spo2(PpgProcessor *p) {
   }
 }
 
+/*******************************************************************************
+ * @brief       Refresca la salida del procesador (una vez por segundo).
+ *
+ * @details     Copia dedo y saturación (sat_hold > 0) a la salida y llama, en
+ *              este orden, a evaluate_spo2(), evaluate_heart_rate() y
+ *              evaluate_quality(): la calidad usa el índice de perfusión que
+ *              calcula la primera.
+ *
+ * @param       Entrada: p->finger, p->sat_hold - dedo presente y saturación
+ *                       vigente.
+ *              Salida:  p->out - resultado completo del segundo.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static void evaluate(PpgProcessor *p) {
   p->out.finger = p->finger;
   p->out.saturated = p->sat_hold > 0;
@@ -204,8 +356,20 @@ static void evaluate(PpgProcessor *p) {
 
 // ---- Finger, reset, sample entry point ----------------------------------------------
 
-// The finger just appeared on this sample: forget everything and prime the filters,
-// so the first sample does not look like a step from zero.
+/*******************************************************************************
+ * @brief       Prepara el procesamiento en el instante en que aparece el dedo.
+ *
+ * @details     Reinicia los cinco filtros y los precarga con la muestra actual
+ *              (sos_prime) para que la primera no parezca un escalón desde
+ *              cero. Vacía la ventana, carga SETTLE_N muestras de asentamiento
+ *              y borra el detector de latidos.
+ *
+ * @param       Entrada: red, ir - primera muestra con dedo (cuentas del ADC).
+ *              Salida:  p - filtros, ventana (w_head, w_count), settle_left y
+ *                       beat reiniciados.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static void start_measurement(PpgProcessor *p, uint32_t red, uint32_t ir) {
   sos_init(&p->bp_red, PPG_BP_SOS, PPG_BP_SECTIONS);
   sos_init(&p->bp_ir, PPG_BP_SOS, PPG_BP_SECTIONS);
@@ -223,11 +387,40 @@ static void start_measurement(PpgProcessor *p, uint32_t red, uint32_t ir) {
   beat_reset(&p->beat);
 }
 
+/*******************************************************************************
+ * @brief       Inicializa el procesador PPG desde cero.
+ *
+ * @details     Pone todo en cero con memset y deja to_eval = PPG_FS, así la
+ *              primera salida llega al cabo de un segundo. También se usa al
+ *              reiniciar el sensor.
+ *
+ * @param       Salida:  p - procesador reiniciado.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 void ppg_init(PpgProcessor *p) {
   memset(p, 0, sizeof(*p));
   p->to_eval = PPG_FS;
 }
 
+/*******************************************************************************
+ * @brief       Procesa una muestra cruda RED/IR y, una vez por segundo,
+ *              refresca la salida.
+ *
+ * @details     Detecta saturación y dedo (histéresis y antirrebote sobre el IR
+ *              crudo), filtra AC y DC de cada canal, acumula AC^2 y DC en la
+ *              ventana y alimenta el detector de latidos. Cada PPG_FS muestras
+ *              llama a evaluate() y devuelve true.
+ *
+ * @param       Entrada: red, ir - muestra cruda de 18 bits (cuentas del ADC).
+ *              Entrada: p - estado del procesador.
+ *              Salida:  retorno (bool) - true cuando se refrescó la salida (una
+ *                       vez por segundo).
+ *              Salida:  p->out, p->dbg - resultado y valores intermedios de
+ *                       esta muestra.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 bool ppg_push(PpgProcessor *p, uint32_t red, uint32_t ir) {
   p->n++;
   p->dbg.beat = false;

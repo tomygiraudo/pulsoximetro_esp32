@@ -39,6 +39,8 @@ typedef struct {
   float spo2;             // %, 0 when not valid
   float r_ratio;          // R, filled whenever it could be computed (even if SpO2 is not valid)
   float perfusion_index;  // % : RMS of the IR AC over the mean IR DC
+  float perfusion_index_red;  // % : the same for the red; R = perfusion_index_red / perfusion_index
+  float ac_rms_ir, ac_rms_red;  // ADC counts: RMS of each channel's AC over the window (the numerator of the PI)
   float bpm;              // provisional (valid = false) until enough beats were seen
   float quality;          // 0..1: perfusion against QUALITY_PI_GOOD_PCT times how regular the beats are
                           // (QUALITY_CV_BAD); 0 without finger, saturated, or before the first result
@@ -96,7 +98,32 @@ void ppg_init(PpgProcessor *p);
 // refreshed, which happens once per second.
 bool ppg_push(PpgProcessor *p, uint32_t red, uint32_t ir);
 
+/*******************************************************************************
+ * @brief       Devuelve el resultado vigente del procesador PPG.
+ *
+ * @details     Entrega un puntero de solo lectura a p->out, que se refresca una
+ *              vez por segundo.
+ *
+ * @param       Entrada: p - procesador PPG.
+ *              Salida:  retorno (const PpgOutput *) - puntero al resultado
+ *                       (SpO2, BPM, calidad).
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static inline const PpgOutput *ppg_output(const PpgProcessor *p) { return &p->out; }
+
+/*******************************************************************************
+ * @brief       Devuelve los valores intermedios de la última muestra procesada.
+ *
+ * @details     Entrega un puntero de solo lectura a p->dbg: AC y DC filtrados,
+ *              traza para pantalla, umbral de latido y estado del dedo.
+ *
+ * @param       Entrada: p - procesador PPG.
+ *              Salida:  retorno (const PpgDebug *) - puntero a los valores
+ *                       intermedios.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static inline const PpgDebug *ppg_debug(const PpgProcessor *p) { return &p->dbg; }
 
 #ifdef __cplusplus

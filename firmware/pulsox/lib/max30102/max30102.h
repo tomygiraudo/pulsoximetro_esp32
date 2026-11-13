@@ -40,28 +40,79 @@ class Max30102 {
   // LEDs to 0 mA and shutdown mode (~1 uA), verified by reading back.
   bool shutdown();
 
-  // Samples lost because the FIFO overran, since the last configure().
+  /*******************************************************************************
+   * @brief       Devuelve las muestras perdidas por desborde del FIFO desde el
+   *              último configure().
+   *
+   * @details     Devuelve overflow_ tal cual.
+   *
+   * @param       Entrada: overflow_ - muestras perdidas acumuladas.
+   *              Salida:  retorno (uint32_t) - ese acumulado.
+   *
+   * @peripherals Ninguno.
+   *******************************************************************************/
   uint32_t overflowCount() const { return overflow_; }
 
-  // Corrupt samples that readFifo() caught and replaced, since begin(). A bus glitch reads as
-  // all ones: six 0xFF bytes, both channels at once. Left alone it would be a full-scale sample,
-  // 262143 on both channels, in the middle of a ~90000 signal: it clips the filters and makes
-  // SpO2 invalid for the 10 s the saturation stays in the window. (The 6 bits above the 18th of
-  // a good sample are junk, not zeros: they are masked, not checked.)
+  /*******************************************************************************
+   * @brief       Devuelve las muestras corruptas que readFifo() reemplazó desde
+   *              begin().
+   *
+   * @details     Un glitch del bus lee como seis bytes 0xFF, en los dos canales a
+   *              la vez. Sin reemplazarlo sería una muestra a fondo de escala
+   *              (262143) en una señal de ~90000: satura los filtros e invalida
+   *              el SpO2 los 10 s que dura en la ventana.
+   *
+   * @param       Entrada: corrupt_ - muestras corruptas reemplazadas.
+   *              Salida:  retorno (uint32_t) - ese acumulado.
+   *
+   * @peripherals Ninguno.
+   *******************************************************************************/
   uint32_t corruptCount() const { return corrupt_; }
 
 #ifdef PULSOX_TEST_HOOKS
-  // Test builds: the next sample read comes out as all ones, as after a bus glitch.
+  /*******************************************************************************
+   * @brief       Pide que la próxima muestra leída salga corrupta (solo builds de
+   *              prueba).
+   *
+   * @details     Activa testCorrupt_: readFifo() pone la próxima muestra en 0xFF,
+   *              como tras un glitch del bus. Existe solo con PULSOX_TEST_HOOKS.
+   *
+   * @param       Salida:  testCorrupt_ - pasa a true.
+   *
+   * @peripherals Ninguno.
+   *******************************************************************************/
   void testCorruptNextSample() { testCorrupt_ = true; }
 #endif
 
-  // Error of the last failed I2C attempt (0 if none yet).
+  /*******************************************************************************
+   * @brief       Devuelve el error del último intento I2C fallido (0 si todavía
+   *              no hubo).
+   *
+   * @details     Devuelve lastErr_ tal cual; errorText() lo traduce a texto.
+   *
+   * @param       Entrada: lastErr_ - código del último error.
+   *              Salida:  retorno (uint8_t) - ese código.
+   *
+   * @peripherals Ninguno.
+   *******************************************************************************/
   uint8_t lastError() const { return lastErr_; }
   static const char *errorText(uint8_t err);
 
  private:
   bool writeReg(uint8_t reg, uint8_t val);
   bool readBytes(uint8_t reg, uint8_t *buf, size_t n);
+
+  /*******************************************************************************
+   * @brief       Lee un solo registro del MAX30102.
+   *
+   * @details     Atajo de readBytes() con n = 1.
+   *
+   * @param       Entrada: reg - dirección del registro.
+   *              Salida:  val - valor leído.
+   *              Salida:  retorno (bool) - true si la lectura salió bien.
+   *
+   * @peripherals Internos: I2C (Wire). Externos: MAX30102.
+   *******************************************************************************/
   bool readReg(uint8_t reg, uint8_t &val) { return readBytes(reg, &val, 1); }
   void clearInterrupts();
   bool softReset();

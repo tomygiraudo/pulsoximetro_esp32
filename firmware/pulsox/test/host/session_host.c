@@ -24,6 +24,17 @@
 
 #define LINE_MAX_LEN 512
 
+/*******************************************************************************
+ * @brief       Busca una columna por nombre en la cabecera de un CSV.
+ *
+ * @details     Recorre con strtok los nombres separados por comas, sobre una
+ *              copia de la cabecera.
+ *
+ * @param       Entrada: header, name - cabecera del CSV y nombre buscado.
+ *              Salida:  retorno (int) - índice de la columna, o -1 si no está.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static int column(const char *header, const char *name) {
   char copy[LINE_MAX_LEN];
   strncpy(copy, header, sizeof(copy) - 1);
@@ -35,6 +46,17 @@ static int column(const char *header, const char *name) {
   return -1;
 }
 
+/*******************************************************************************
+ * @brief       Lee el campo número idx de una línea CSV como entero sin signo.
+ *
+ * @details     Salta idx comas y convierte con strtoul.
+ *
+ * @param       Entrada: line, idx - línea CSV y número de campo.
+ *              Salida:  out - valor leído.
+ *              Salida:  retorno (int) - 1 si había un número; 0 si no.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static int field(const char *line, int idx, unsigned long *out) {
   const char *s = line;
   for (int i = 0; i < idx; i++) {
@@ -50,6 +72,22 @@ static int field(const char *line, int idx, unsigned long *out) {
 static PpgProcessor ppg;
 static PpgSession session;
 
+/*******************************************************************************
+ * @brief       Corre el procesador PPG y el juez de la medición sobre una
+ *              captura, en la PC.
+ *
+ * @details     Aplica las alteraciones pedidas (--finger-off, --saturate,
+ *              --noise, --cut), pasa cada muestra por ppg_push() y cada segundo
+ *              por ppg_session_push() desde el primer segundo con dedo, y
+ *              escribe cómo terminó (con -v, una línea por segundo).
+ *
+ * @param       Entrada: argc, argv - captura.csv y opciones.
+ *              Salida:  retorno (int) - 0 = bien; 1 = error de archivo o
+ *                       columnas; 2 = uso.
+ *              Salida:  salida estándar - resultado de la medición.
+ *
+ * @peripherals Ninguno (programa de PC: solo lee y escribe archivos).
+ *******************************************************************************/
 int main(int argc, char **argv) {
   if (argc < 2) {
     fprintf(stderr, "uso: %s captura.csv [-v] [--finger-off S] [--saturate S [LEN]] [--noise S] [--cut S]\n",

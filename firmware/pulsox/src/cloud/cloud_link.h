@@ -1,6 +1,6 @@
 // The cloud connection, run by a task of its own so that the blocking parts (WiFi, the TLS
 // handshakes, one HTTPS request per second) never stall the sensor polling or the screen:
-// the FIFO of the MAX30102 holds 320 ms of samples, a handshake can take seconds.
+// the FIFO of the MAX30102 holds 640 ms of samples, a handshake can take seconds.
 //
 // The loop task only posts commands (connect, start a session, finish, abort, disconnect)
 // and hands over one `live` tick per second; the cloud task does the I/O. Everything is

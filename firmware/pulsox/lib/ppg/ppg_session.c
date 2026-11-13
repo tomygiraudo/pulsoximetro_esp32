@@ -3,7 +3,18 @@
 
 #define W MEAS_RESULT_WINDOW_S
 
-// Median of v[0..n) (n > 0); sorts v in place.
+/*******************************************************************************
+ * @brief       Calcula la mediana de v[0..n), ordenando v en el lugar.
+ *
+ * @details     Ordena por inserción y toma el elemento del medio (o el promedio
+ *              de los dos centrales). Requiere n > 0.
+ *
+ * @param       Entrada: n - cantidad de elementos.
+ *              Salida:  v - queda ordenado de menor a mayor.
+ *              Salida:  retorno (float) - la mediana.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static float median(float *v, int n) {
   for (int i = 1; i < n; i++) {  // insertion sort
     float x = v[i];
@@ -17,14 +28,49 @@ static float median(float *v, int n) {
   return (n & 1) ? v[n / 2] : 0.5f * (v[n / 2 - 1] + v[n / 2]);
 }
 
+/*******************************************************************************
+ * @brief       Deja una sesión de medición lista para empezar.
+ *
+ * @details     Pone todo en cero con memset: estado RUNNING, contadores y
+ *              ventana vacíos.
+ *
+ * @param       Salida:  s - sesión reiniciada.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 void ppg_session_init(PpgSession *s) { memset(s, 0, sizeof(*s)); }
 
+/*******************************************************************************
+ * @brief       Marca la sesión como descartada y guarda el motivo.
+ *
+ * @details     Pasa el estado a PPG_SESSION_ABORTED y anota la razón.
+ *
+ * @param       Entrada: r - motivo del descarte.
+ *              Salida:  s->state, s->reason - ABORTED y el motivo.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static void abort_with(PpgSession *s, PpgAbortReason r) {
   s->state = PPG_SESSION_ABORTED;
   s->reason = r;
 }
 
-// The good seconds of the window: how many, and their medians when asked for.
+/*******************************************************************************
+ * @brief       Cuenta los segundos buenos de la ventana y, si se pide, calcula
+ *              sus medianas.
+ *
+ * @details     Recorre el anillo de los últimos MEAS_RESULT_WINDOW_S segundos,
+ *              junta SpO2, BPM y calidad de los marcados como buenos y saca la
+ *              mediana de cada uno. Con spo2 nulo solo cuenta.
+ *
+ * @param       Entrada: s - sesión (ventana w_* y w_count).
+ *              Salida:  spo2, bpm, quality - medianas de los segundos buenos
+ *                       (NULL: solo cuenta).
+ *              Salida:  retorno (int) - cantidad de segundos buenos en la
+ *                       ventana.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static int window_good(const PpgSession *s, float *spo2, float *bpm, float *quality) {
   float a[W], b[W], c[W];
   int n = 0;
@@ -43,6 +89,23 @@ static int window_good(const PpgSession *s, float *spo2, float *bpm, float *qual
   return n;
 }
 
+/*******************************************************************************
+ * @brief       Juzga la medición con la salida de un segundo del procesador
+ *              PPG.
+ *
+ * @details     Aborta si falta el dedo, hay saturación o la señal es errática.
+ *              Pasado MEAS_WARMUP_S puntúa cada segundo (bueno o malo). Termina
+ *              con la mediana de los buenos al cumplir MEAS_MIN_S y los mínimos
+ *              de validez; descarta a MEAS_MAX_S.
+ *
+ * @param       Entrada: o - salida del procesador PPG de este segundo.
+ *              Entrada: s - sesión en curso.
+ *              Salida:  retorno (PpgSessionState) - RUNNING, DONE o ABORTED.
+ *              Salida:  s - contadores, ventana y, al terminar,
+ *                       spo2/bpm/quality o reason.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 PpgSessionState ppg_session_push(PpgSession *s, const PpgOutput *o) {
   if (s->state != PPG_SESSION_RUNNING) return s->state;
   s->seconds++;
@@ -86,11 +149,32 @@ PpgSessionState ppg_session_push(PpgSession *s, const PpgOutput *o) {
   return s->state;
 }
 
+/*******************************************************************************
+ * @brief       Calcula el avance de la medición, de 0 a 100 %.
+ *
+ * @details     seconds * 100 / MEAS_MIN_S con tope 100: llega al 100 % cuando
+ *              la medición puede terminar por primera vez.
+ *
+ * @param       Entrada: s->seconds - segundos procesados.
+ *              Salida:  retorno (int) - porcentaje de avance.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 int ppg_session_progress(const PpgSession *s) {
   int pct = s->seconds * 100 / MEAS_MIN_S;
   return pct > 100 ? 100 : pct;
 }
 
+/*******************************************************************************
+ * @brief       Devuelve el motivo de descarte como texto corto en español.
+ *
+ * @details     Para los logs: sin tildes. Un valor desconocido da "ninguno".
+ *
+ * @param       Entrada: r - motivo del descarte.
+ *              Salida:  retorno (const char *) - texto del motivo.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 const char *ppg_abort_text(PpgAbortReason r) {
   switch (r) {
     case PPG_ABORT_FINGER_LOST: return "dedo retirado";

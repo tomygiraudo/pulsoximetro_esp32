@@ -165,8 +165,10 @@ Cada línea de log empieza con el uptime y una etiqueta (`[APP ]`, `[MEAS]`, `[C
 | `b` | simula el botón |
 | `g` | corrompe la próxima muestra del sensor (solo en `dev`, para probar el driver) |
 
-La línea `[LIVE]` de cada segundo da las muestras/s (tienen que ser ~100), el último
-RED/IR, los desbordes del FIFO, las **muestras corruptas** que el driver reemplazó,
+La línea `[LIVE]` de cada segundo da las muestras/s (tienen que coincidir con `SENSOR_FS_HZ`: 50 en esta prueba, 100 antes), el último
+RED/IR, el PI de cada canal (`PI ir` y `PI red`: RMS del AC sobre el DC medio de la
+ventana de 10 s, y R es el PI rojo sobre el PI IR), el AC de cada canal en cuentas (`AC ir` y
+`AC red`: el RMS del que sale el PI), los desbordes del FIFO, las **muestras corruptas** que el driver reemplazó,
 los fallos de I2C y el refresco de pantalla más lento. Si aparece `SATURADO` con el
 valor crudo muy por debajo del tope (262143), es un glitch del bus.
 
