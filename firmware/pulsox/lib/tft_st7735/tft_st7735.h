@@ -139,8 +139,8 @@
 //    - Las funciones de dibujo BLOQUEAN hasta terminar de mandar los datos por
 //      SPI. Estimado teórico a 10 MHz, no medido: 128 x 72 px ≈ 15 ms y la
 //      pantalla completa ≈ 26 ms.
-//    - Si el firmware lee un sensor con FIFO (el MAX30102 de pulsox guarda 320 ms
-//      de datos a 100 muestras/s), mantener el refresco de pantalla en 100 ms o
+//    - Si el firmware lee un sensor con FIFO (el MAX30102 de pulsox guarda 640 ms
+//      de datos a 50 muestras/s = 400 sps / 8), mantener el refresco de pantalla en 100 ms o
 //      más y no bloquear el loop() más tiempo que el que aguanta el FIFO.
 //    - Dibujar siempre desde el loop() o una tarea, nunca desde una interrupción.
 //    - Usar el SPI por hardware (el que configura tftBegin). El SPI por software
@@ -258,32 +258,60 @@ class TftPanel : public Adafruit_ST7735 {
   // Reutiliza los constructores de Adafruit_ST7735 (se usa el de SPI por hardware).
   using Adafruit_ST7735::Adafruit_ST7735;
 
-  // Mueve el origen de la imagen dentro de la RAM del controlador.
-  //   dx: columnas a sumar al origen (negativo = izquierda).
-  //   dy: filas a sumar al origen (positivo = baja la imagen).
-  // Hay que llamarlo DESPUÉS de setRotation(), que recalcula el origen con los
-  // valores que trae la librería. Los campos _xstart y _ystart son protegidos, por
-  // eso hace falta esta subclase.
+  /*******************************************************************************
+   * @brief       Mueve el origen de la imagen dentro de la RAM del controlador.
+   *
+   * @details     Suma dx y dy a _xstart e _ystart, que son protegidos en
+   *              Adafruit_ST7735 (de ahí la subclase). Llamarlo DESPUÉS de
+   *              setRotation(), que recalcula el origen.
+   *
+   * @param       Entrada: dx - columnas a sumar (negativo = izquierda).
+   *              Entrada: dy - filas a sumar (positivo = baja la imagen).
+   *              Salida:  _xstart, _ystart - origen ya con la rotación y el
+   *                       corrimiento.
+   *
+   * @peripherals Ninguno.
+   *******************************************************************************/
   void nudgeOrigin(int8_t dx, int8_t dy) {
     _xstart += dx;  // Origen horizontal ya con la rotación aplicada, más el corrimiento.
     _ystart += dy;  // Origen vertical ya con la rotación aplicada, más el corrimiento.
   }
 };
 
-// Devuelve LA pantalla (siempre la misma, en cualquier archivo .cpp que incluya
-// este .h). Se crea la primera vez que se la pide. Con este objeto se usan todas
-// las funciones de dibujo:  tftScreen().fillCircle(64, 64, 10, ST77XX_RED);
+/*******************************************************************************
+ * @brief       Devuelve LA pantalla del firmware (siempre la misma instancia).
+ *
+ * @details     Instancia estática creada la primera vez que se la pide: SPI por
+ *              hardware, CS, DC y RST por GPIO. Es la misma en cualquier .cpp
+ *              que incluya este .h; con ella se usan todas las funciones de
+ *              dibujo.
+ *
+ * @param       Salida:  retorno (TftPanel &) - la pantalla.
+ *
+ * @peripherals Internos: SPI y GPIO (CS, DC, RST), al dibujar.
+ *              Externos: pantalla TFT.
+ *******************************************************************************/
 inline TftPanel &tftScreen() {
   // Única instancia de la pantalla: SPI por hardware, CS, DC y RST por GPIO.
   static TftPanel panel(&SPI, PIN_CS_TFT, PIN_DC_TFT, PIN_RST_TFT);
   return panel;
 }
 
-// Inicializa la pantalla con la secuencia validada en la placa. Llamar UNA vez,
-// desde setup(). Deja la pantalla en negro y el backlight encendido (o apagado si
-// TFT_BL_ON_AT_BEGIN es 0).
-// Secuencia: backlight -> SPI -> initR (a 32 MHz) -> baja a 10 MHz -> rotación ->
-// calibración del origen -> pantalla en negro.
+/*******************************************************************************
+ * @brief       Inicializa la pantalla con la secuencia validada en la placa.
+ *
+ * @details     Backlight (apagado si TFT_BL_ON_AT_BEGIN es 0), SPI, initR a 32
+ *              MHz, baja a TFT_SPI_HZ, rotación, calibración del origen y
+ *              pantalla en negro. Llamar UNA vez, desde setup().
+ *
+ * @param       Entrada: PIN_*_TFT, TFT_* - pines, rotación, ajuste de origen y
+ *                       velocidad del SPI.
+ *              Salida:  pantalla - inicializada, en negro, con el backlight
+ *                       según TFT_BL_ON_AT_BEGIN.
+ *
+ * @peripherals Internos: SPI, GPIO (backlight, CS, DC y RST).
+ *              Externos: pantalla TFT (ST7735S).
+ *******************************************************************************/
 inline void tftBegin() {
   pinMode(PIN_BL_TFT, OUTPUT);                  // El pin del backlight es una salida.
   digitalWrite(PIN_BL_TFT, TFT_BL_ON_AT_BEGIN ? TFT_BL_ON : !TFT_BL_ON);  // Backlight al empezar.
@@ -297,19 +325,40 @@ inline void tftBegin() {
   pantalla.fillScreen(ST77XX_BLACK);            // Empieza en negro.
 }
 
-// Enciende o apaga el backlight (la pantalla sigue funcionando, solo se ve negra).
-//   encendido: true = prender, false = apagar.
+/*******************************************************************************
+ * @brief       Enciende o apaga el backlight (la pantalla sigue funcionando,
+ *              solo se ve negra).
+ *
+ * @details     Escribe en PIN_BL_TFT el nivel que enciende (TFT_BL_ON) o su
+ *              inverso.
+ *
+ * @param       Entrada: encendido - true = prender, false = apagar.
+ *
+ * @peripherals Internos: GPIO (PIN_BL_TFT).
+ *              Externos: backlight de la pantalla TFT.
+ *******************************************************************************/
 inline void tftBacklight(bool encendido) {
   // Si TFT_BL_ON es HIGH, encender es HIGH; si fuera activo en bajo, se invierte.
   digitalWrite(PIN_BL_TFT, encendido ? TFT_BL_ON : !TFT_BL_ON);
 }
 
-// Escribe un texto con fondo opaco (no parpadea; ver 2.3 del instructivo).
-//   x, y:   posición de la esquina superior izquierda del texto, en píxeles.
-//   texto:  cadena terminada en cero.
-//   tamano: factor de escala de la fuente (1 = 6x8 px por carácter, 2 = 12x16, ...).
-//   color:  color de las letras (RGB565).
-//   fondo:  color del fondo de cada carácter (RGB565).
+/*******************************************************************************
+ * @brief       Escribe un texto con fondo opaco, sin parpadeo.
+ *
+ * @details     Fija tamaño, colores y cursor y hace print(). El fondo opaco
+ *              tapa el texto anterior sin borrar la pantalla; el texto nuevo
+ *              debe ocupar al menos tantos caracteres como el anterior.
+ *
+ * @param       Entrada: x, y - esquina superior izquierda del texto, en
+ *                       píxeles.
+ *              Entrada: texto - cadena terminada en cero.
+ *              Entrada: tamano - escala de la fuente (1 = 6x8 px por carácter,
+ *                       2 = 12x16, ...).
+ *              Entrada: color, fondo - color de las letras y del fondo de cada
+ *                       carácter (RGB565).
+ *
+ * @peripherals Internos: SPI. Externos: pantalla TFT.
+ *******************************************************************************/
 inline void tftPrintAt(int16_t x, int16_t y, const char *texto, uint8_t tamano = 1,
                        uint16_t color = ST77XX_WHITE, uint16_t fondo = ST77XX_BLACK) {
   TftPanel &pantalla = tftScreen();     // La pantalla donde se escribe.
@@ -337,13 +386,25 @@ inline void tftPrintAt(int16_t x, int16_t y, const char *texto, uint8_t tamano =
 // para que el ruido no se agrande hasta ocupar todo el alto.
 class TftTrace {
  public:
-  // Crea el gráfico. Reserva ancho x alto x 2 bytes de RAM para el lienzo.
-  //   x, y:    esquina superior izquierda de la zona en la pantalla, en píxeles.
-  //   ancho:   ancho de la zona; también es la cantidad de muestras que se
-  //            guardan (entre 1 y TFT_W; si es mayor se recorta a TFT_W).
-  //   alto:    alto de la zona en píxeles.
-  //   color:   color de la línea (RGB565).
-  //   spanMin: rango vertical mínimo, en las mismas unidades que las muestras.
+  /*******************************************************************************
+   * @brief       Crea el gráfico de señal y reserva su lienzo en RAM.
+   *
+   * @details     Guarda la zona y el color; el ancho se recorta a TFT_W y el
+   *              lienzo (GFXcanvas16) reserva ancho x alto x 2 bytes de RAM.
+   *
+   * @param       Entrada: x, y - esquina superior izquierda de la zona, en
+   *                       píxeles.
+   *              Entrada: ancho - ancho de la zona = muestras guardadas (1 a
+   *                       TFT_W).
+   *              Entrada: alto - alto de la zona, en píxeles.
+   *              Entrada: color - color de la línea (RGB565).
+   *              Entrada: spanMin - rango vertical mínimo, en unidades de la
+   *                       muestra.
+   *              Salida:  x_, y_, w_, h_, color_, spanMin_, lienzo_ - miembros
+   *                       inicializados.
+   *
+   * @peripherals Ninguno.
+   *******************************************************************************/
   TftTrace(int16_t x, int16_t y, int16_t ancho, int16_t alto, uint16_t color = ST77XX_CYAN,
            float spanMin = 256.0f)
       : x_(x),
@@ -354,10 +415,19 @@ class TftTrace {
         spanMin_(spanMin),
         lienzo_(ancho > TFT_W ? TFT_W : ancho, alto) {}
 
-  // Agrega una muestra nueva (la más vieja se descarta). La primera muestra
-  // llena todo el historial con su valor, para que el gráfico empiece plano y no
-  // en cero.
-  //   valor: la muestra, en cualquier unidad (cuentas del sensor, señal filtrada...).
+  /*******************************************************************************
+   * @brief       Agrega una muestra nueva al historial del gráfico.
+   *
+   * @details     Pisa la más vieja en el buffer circular. La primera muestra tras
+   *              el inicio o reset() llena todo el historial con su valor, para
+   *              que el gráfico empiece plano y no en cero.
+   *
+   * @param       Entrada: valor - muestra, en cualquier unidad (cuentas, señal
+   *                       filtrada...).
+   *              Salida:  historial_, cabeza_, cargado_ - historial actualizado.
+   *
+   * @peripherals Ninguno.
+   *******************************************************************************/
   void push(float valor) {
     if (!cargado_) {                                          // Primera muestra desde el inicio o reset().
       for (uint16_t i = 0; i < w_; i++) historial_[i] = valor;  // i: columna del historial.
@@ -367,14 +437,36 @@ class TftTrace {
     cabeza_ = (cabeza_ + 1) % w_;      // La próxima más vieja es la siguiente.
   }
 
-  // Olvida el historial. La próxima muestra vuelve a llenarlo con su valor.
+  /*******************************************************************************
+   * @brief       Olvida el historial del gráfico.
+   *
+   * @details     Marca el historial como vacío y vuelve al inicio del buffer
+   *              circular: la próxima muestra lo vuelve a llenar con su valor.
+   *
+   * @param       Salida:  cargado_, cabeza_ - historial vacío, cabeza al inicio.
+   *
+   * @peripherals Ninguno.
+   *******************************************************************************/
   void reset() {
     cargado_ = false;  // Marca el historial como vacío.
     cabeza_ = 0;       // Vuelve al principio del buffer circular.
   }
 
-  // Redibuja el gráfico en la pantalla. No hace nada si todavía no hay muestras
-  // o si no alcanzó la RAM para el lienzo. Bloquea mientras manda los datos.
+  /*******************************************************************************
+   * @brief       Redibuja el gráfico en la pantalla, con autoescala vertical.
+   *
+   * @details     Busca mínimo y máximo del historial (con rango mínimo spanMin_),
+   *              traza la línea en el lienzo de RAM, de la muestra más vieja
+   *              (izquierda) a la más nueva, y lo manda de una vez a la pantalla.
+   *              No hace nada sin muestras o sin RAM; bloquea mientras envía.
+   *
+   * @param       Entrada: historial_, cabeza_, spanMin_, color_ - datos, escala y
+   *                       color.
+   *              Salida:  lienzo_ - se borra y se redibuja.
+   *              Salida:  pantalla - zona (x_, y_, w_, h_) actualizada.
+   *
+   * @peripherals Internos: SPI. Externos: pantalla TFT.
+   *******************************************************************************/
   void draw() {
     if (!cargado_ || lienzo_.getBuffer() == nullptr) return;
 

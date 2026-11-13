@@ -98,7 +98,32 @@ void ppg_init(PpgProcessor *p);
 // refreshed, which happens once per second.
 bool ppg_push(PpgProcessor *p, uint32_t red, uint32_t ir);
 
+/*******************************************************************************
+ * @brief       Devuelve el resultado vigente del procesador PPG.
+ *
+ * @details     Entrega un puntero de solo lectura a p->out, que se refresca una
+ *              vez por segundo.
+ *
+ * @param       Entrada: p - procesador PPG.
+ *              Salida:  retorno (const PpgOutput *) - puntero al resultado
+ *                       (SpO2, BPM, calidad).
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static inline const PpgOutput *ppg_output(const PpgProcessor *p) { return &p->out; }
+
+/*******************************************************************************
+ * @brief       Devuelve los valores intermedios de la última muestra procesada.
+ *
+ * @details     Entrega un puntero de solo lectura a p->dbg: AC y DC filtrados,
+ *              traza para pantalla, umbral de latido y estado del dedo.
+ *
+ * @param       Entrada: p - procesador PPG.
+ *              Salida:  retorno (const PpgDebug *) - puntero a los valores
+ *                       intermedios.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static inline const PpgDebug *ppg_debug(const PpgProcessor *p) { return &p->dbg; }
 
 #ifdef __cplusplus

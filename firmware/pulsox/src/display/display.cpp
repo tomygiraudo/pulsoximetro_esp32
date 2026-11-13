@@ -30,6 +30,18 @@ constexpr int W = 128;
 constexpr int H = 128;
 
 // ---- Palette (RGB565 of the table in sheet D) -----------------------------------
+
+/*******************************************************************************
+ * @brief       Convierte un color de 8 bits por canal a RGB565.
+ *
+ * @details     Se queda con los 5 bits altos del rojo, 6 del verde y 5 del
+ *              azul.
+ *
+ * @param       Entrada: r, g, b - componentes de 0 a 255.
+ *              Salida:  retorno (uint16_t) - color RGB565.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 constexpr uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) {
   return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
@@ -147,6 +159,18 @@ constexpr int MAX_DIRTY = 6;
 Rect dirty[MAX_DIRTY];
 int dirtyCount = 0;
 
+/*******************************************************************************
+ * @brief       Marca un rectángulo como modificado, para reenviarlo al panel.
+ *
+ * @details     Lo recorta a la pantalla y lo ignora si ya está cubierto por
+ *              otro; descarta los que él cubre y, si ya hay MAX_DIRTY (6), pasa
+ *              a reenviar la pantalla completa.
+ *
+ * @param       Entrada: x, y, w, h - rectángulo, en píxeles.
+ *              Salida:  dirty[], dirtyCount - lista de rectángulos pendientes.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 void markDirty(int x, int y, int w, int h) {
   if (x < 0) { w += x; x = 0; }
   if (y < 0) { h += y; y = 0; }
@@ -169,6 +193,20 @@ void markDirty(int x, int y, int w, int h) {
   dirty[dirtyCount++] = {(int16_t)x, (int16_t)y, (int16_t)w, (int16_t)h};
 }
 
+/*******************************************************************************
+ * @brief       Manda al panel los rectángulos modificados del frame buffer.
+ *
+ * @details     Por cada rectángulo abre una ventana de direcciones y escribe
+ *              sus píxeles por SPI. Lo ensancha a una columna inicial par: el
+ *              SPI lee de a 32 bits y el ESP32-C3 falla con un acceso
+ *              desalineado.
+ *
+ * @param       Entrada: dirty[], dirtyCount, fb - rectángulos pendientes y
+ *                       píxeles.
+ *              Salida:  dirtyCount - vuelve a 0.
+ *
+ * @peripherals Internos: SPI. Externos: pantalla TFT.
+ *******************************************************************************/
 void flushDirty() {
   if (dirtyCount == 0) return;
   TftPanel &tft = tftScreen();
@@ -192,7 +230,18 @@ void flushDirty() {
 
 // ---- Drawing primitives -------------------------------------------------------------
 
-// Mix of fg over bg, a = 0 (bg) to 255 (fg). Both RGB565.
+/*******************************************************************************
+ * @brief       Mezcla dos colores RGB565 según un alfa.
+ *
+ * @details     Separa los tres canales con una máscara para mezclarlos con una
+ *              sola multiplicación; el alfa va de 0 (fondo) a 255 (frente).
+ *
+ * @param       Entrada: bg, fg - color de fondo y de frente (RGB565).
+ *              Entrada: a - alfa, de 0 a 255.
+ *              Salida:  retorno (uint16_t) - color mezclado.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 inline uint16_t blend(uint16_t bg, uint16_t fg, uint8_t a) {
   constexpr uint32_t MASK = 0x07E0F81F;  // spreads the 3 channels apart so one multiply mixes all
   uint32_t b = (bg | ((uint32_t)bg << 16)) & MASK;
@@ -201,12 +250,36 @@ inline uint16_t blend(uint16_t bg, uint16_t fg, uint8_t a) {
   return (uint16_t)(mixed | (mixed >> 16));
 }
 
+/*******************************************************************************
+ * @brief       Pinta un píxel del frame buffer mezclándolo con lo que ya hay.
+ *
+ * @details     Fuera de la pantalla o con alfa 0 no hace nada; con alfa 255 lo
+ *              reemplaza.
+ *
+ * @param       Entrada: x, y - posición del píxel.
+ *              Entrada: color, a - color (RGB565) y alfa de 0 a 255.
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 inline void blendPixel(int x, int y, uint16_t color, uint8_t a) {
   if ((unsigned)x >= (unsigned)W || (unsigned)y >= (unsigned)H || a == 0) return;
   uint16_t &p = fb[y * W + x];
   p = a == 255 ? color : blend(p, color, a);
 }
 
+/*******************************************************************************
+ * @brief       Rellena un rectángulo del frame buffer con un color liso.
+ *
+ * @details     Lo recorta a la pantalla. No marca la zona como modificada: eso
+ *              lo hace quien llama, con markDirty().
+ *
+ * @param       Entrada: x, y, w, h - rectángulo, en píxeles.
+ *              Entrada: color - color de relleno (RGB565).
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 void fillRect(int x, int y, int w, int h, uint16_t color) {
   if (x < 0) { w += x; x = 0; }
   if (y < 0) { h += y; y = 0; }
@@ -218,13 +291,35 @@ void fillRect(int x, int y, int w, int h, uint16_t color) {
   }
 }
 
+/*******************************************************************************
+ * @brief       Mezcla un color con alfa sobre un rectángulo del frame buffer.
+ *
+ * @details     Llama a blendPixel() por cada píxel del rectángulo.
+ *
+ * @param       Entrada: x, y, w, h - rectángulo, en píxeles.
+ *              Entrada: color, a - color (RGB565) y alfa de 0 a 255.
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 void blendRect(int x, int y, int w, int h, uint16_t color, uint8_t a) {
   for (int row = y; row < y + h; row++)
     for (int col = x; col < x + w; col++) blendPixel(col, row, color, a);
 }
 
-// Coverage (0-255) of the pixel (i, j) of a rounded corner of radius r, with (0, 0) the
-// outermost pixel. 4x4 samples.
+/*******************************************************************************
+ * @brief       Calcula la cobertura de un píxel de una esquina redondeada.
+ *
+ * @details     Muestrea 4x4 puntos del píxel y cuenta cuántos caen dentro del
+ *              círculo de radio r; sirve de alfa para suavizar el borde. (0, 0)
+ *              es el píxel más externo.
+ *
+ * @param       Entrada: i, j - posición del píxel dentro de la esquina.
+ *              Entrada: r - radio de la esquina.
+ *              Salida:  retorno (uint8_t) - cobertura, de 0 a 255.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 uint8_t cornerCoverage(int i, int j, int r) {
   int inside = 0;
   for (int sy = 0; sy < 4; sy++) {
@@ -237,7 +332,20 @@ uint8_t cornerCoverage(int i, int j, int r) {
   return (uint8_t)(inside * 255 / 16);
 }
 
-// Filled rectangle with anti-aliased rounded corners. Meant to be drawn over a flat background.
+/*******************************************************************************
+ * @brief       Dibuja un rectángulo relleno con esquinas redondeadas y
+ *              suavizadas.
+ *
+ * @details     Rellena tres franjas rectas y mezcla cada píxel de las cuatro
+ *              esquinas con su cobertura. Pensado para dibujarse sobre un fondo
+ *              liso.
+ *
+ * @param       Entrada: x, y, w, h, r - rectángulo y radio de las esquinas.
+ *              Entrada: color - color de relleno (RGB565).
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 void fillRoundRect(int x, int y, int w, int h, int r, uint16_t color) {
   fillRect(x, y + r, w, h - 2 * r, color);
   fillRect(x + r, y, w - 2 * r, r, color);
@@ -253,7 +361,21 @@ void fillRoundRect(int x, int y, int w, int h, int r, uint16_t color) {
   }
 }
 
-// 4-bit alpha mask (two pixels per byte, high nibble first) in a color; opacity scales it.
+/*******************************************************************************
+ * @brief       Dibuja una máscara alfa de 4 bits con un color.
+ *
+ * @details     La máscara guarda dos píxeles por byte, nibble alto primero;
+ *              cada nibble se lleva a 0-255 (x17), se escala con la opacidad y
+ *              se mezcla sobre el buffer.
+ *
+ * @param       Entrada: bitmap, w, h - máscara y su tamaño.
+ *              Entrada: x, y - esquina superior izquierda.
+ *              Entrada: color, opacity - color (RGB565) y opacidad global (255
+ *                       = plena).
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 void drawMask(const uint8_t *bitmap, int w, int h, int x, int y, uint16_t color, uint8_t opacity = 255) {
   for (int row = 0; row < h; row++) {
     int py = y + row;
@@ -270,12 +392,37 @@ void drawMask(const uint8_t *bitmap, int w, int h, int x, int y, uint16_t color,
   }
 }
 
+/*******************************************************************************
+ * @brief       Dibuja un icono (máscara con su desplazamiento) en una posición.
+ *
+ * @details     Llama a drawMask() con el desplazamiento xo/yo del icono; si el
+ *              icono está vacío (w = 0) no hace nada.
+ *
+ * @param       Entrada: icon - icono (máscara, tamaño y desplazamiento).
+ *              Entrada: x, y - posición de referencia.
+ *              Entrada: color, opacity - color (RGB565) y opacidad global.
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 void drawIcon(const DispIcon &icon, int x, int y, uint16_t color, uint8_t opacity = 255) {
   if (icon.w) drawMask(icon.bitmap, icon.w, icon.h, x + icon.xo, y + icon.yo, color, opacity);
 }
 
 // ---- Text ---------------------------------------------------------------------------
 
+/*******************************************************************************
+ * @brief       Devuelve el próximo código Unicode de un texto UTF-8.
+ *
+ * @details     Decodifica 1, 2 o 3 bytes y avanza el puntero; devuelve 0 al
+ *              llegar al final. No contempla secuencias de 4 bytes.
+ *
+ * @param       Entrada: s - puntero al texto UTF-8.
+ *              Salida:  s - avanza al carácter siguiente.
+ *              Salida:  retorno (uint16_t) - código Unicode; 0 = fin del texto.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 uint16_t nextCode(const char *&s) {  // next UTF-8 code point, 0 at the end
   uint8_t c = (uint8_t)*s;
   if (c == 0) return 0;
@@ -291,15 +438,45 @@ uint16_t nextCode(const char *&s) {  // next UTF-8 code point, 0 at the end
   return code;
 }
 
+/*******************************************************************************
+ * @brief       Busca un glifo por su código Unicode en una fuente.
+ *
+ * @details     Recorre la tabla de glifos de la fuente; devuelve nulo si no
+ *              está.
+ *
+ * @param       Entrada: font - fuente.
+ *              Entrada: code - código Unicode.
+ *              Salida:  retorno (const DispGlyph *) - glifo, o NULL si la
+ *                       fuente no lo tiene.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 const DispGlyph *findGlyph(const DispFont &font, uint16_t code) {
   for (uint8_t i = 0; i < font.count; i++)
     if (font.glyphs[i].code == code) return &font.glyphs[i];
   return nullptr;
 }
 
-// Draws `text` with the pen starting at x16 (1/16 px) on the given baseline and returns
-// the pen position after the last glyph (letter-spacing included, as CSS does). U+2082 (the
-// subscript 2 of "SpO₂") is drawn from `sub`, lowered. With draw = false it only measures.
+/*******************************************************************************
+ * @brief       Dibuja un texto (o solo lo mide) y devuelve dónde queda el
+ *              cursor.
+ *
+ * @details     Parte de x16 (1/16 px) sobre la línea base y suma el avance de
+ *              cada glifo más el espaciado entre letras, como CSS. U+2082 (el 2
+ *              subíndice de «SpO₂») se dibuja con la fuente `sub`, más abajo.
+ *              Con draw = false solo mide.
+ *
+ * @param       Entrada: font, text - fuente y texto UTF-8.
+ *              Entrada: x16, baseline - cursor inicial (1/16 px) y línea base.
+ *              Entrada: color, opacity, track16 - color, opacidad y espaciado
+ *                       (1/16 px).
+ *              Entrada: sub, draw - fuente del subíndice (puede ser NULL);
+ *                       false = solo medir.
+ *              Salida:  retorno (int) - cursor final, en 1/16 px.
+ *              Salida:  fb - texto dibujado (si draw).
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 int layoutText(const DispFont &font, int x16, int baseline, const char *text, uint16_t color, int track16,
                const DispFont *sub, uint8_t opacity, bool draw) {
   while (uint16_t code = nextCode(text)) {
@@ -319,16 +496,53 @@ int layoutText(const DispFont &font, int x16, int baseline, const char *text, ui
   return x16;
 }
 
+/*******************************************************************************
+ * @brief       Dibuja un texto en el frame buffer.
+ *
+ * @details     Llama a layoutText() con draw = true.
+ *
+ * @param       Entrada: font, text, x16, baseline - fuente, texto y posición (x
+ *                       en 1/16 px).
+ *              Entrada: color, track16, sub, opacity - color, espaciado,
+ *                       subíndice y opacidad.
+ *              Salida:  retorno (int) - cursor final, en 1/16 px.
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 int drawText(const DispFont &font, int x16, int baseline, const char *text, uint16_t color, int track16 = 0,
              const DispFont *sub = nullptr, uint8_t opacity = 255) {
   return layoutText(font, x16, baseline, text, color, track16, sub, opacity, true);
 }
 
+/*******************************************************************************
+ * @brief       Mide el ancho de un texto sin dibujarlo.
+ *
+ * @details     Llama a layoutText() con draw = false, partiendo de 0.
+ *
+ * @param       Entrada: font, text, track16, sub - fuente, texto, espaciado y
+ *                       subíndice.
+ *              Salida:  retorno (int) - ancho, en 1/16 px.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 int textWidth(const DispFont &font, const char *text, int track16 = 0, const DispFont *sub = nullptr) {
   return layoutText(font, 0, 0, text, 0, track16, sub, 255, false);
 }
 
-// Text centered on cx, as a flex item would be: the trailing letter-spacing counts.
+/*******************************************************************************
+ * @brief       Dibuja un texto centrado en una columna.
+ *
+ * @details     Resta la mitad de su ancho (con el espaciado final, como un flex
+ *              item de CSS) al centro cx.
+ *
+ * @param       Entrada: font, text - fuente y texto.
+ *              Entrada: cx, baseline - columna central (px) y línea base.
+ *              Entrada: color, track16, sub - color, espaciado y subíndice.
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 void drawTextCentered(const DispFont &font, int cx, int baseline, const char *text, uint16_t color,
                       int track16 = 0, const DispFont *sub = nullptr) {
   drawText(font, cx * 16 - textWidth(font, text, track16, sub) / 2, baseline, text, color, track16, sub);
@@ -336,6 +550,17 @@ void drawTextCentered(const DispFont &font, int cx, int baseline, const char *te
 
 // ---- Values ---------------------------------------------------------------------------
 
+/*******************************************************************************
+ * @brief       Devuelve el color del nivel de alerta actual.
+ *
+ * @details     Ámbar con CAUTION, rojo con CRITICAL y verde en cualquier otro
+ *              caso (normal).
+ *
+ * @param       Entrada: alertLevel - nivel de alerta.
+ *              Salida:  retorno (uint16_t) - color RGB565.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 uint16_t levelColor() {
   switch (alertLevel) {
     case DisplayAlert::CAUTION: return C_CAUTION;
@@ -347,6 +572,22 @@ uint16_t levelColor() {
 // ---- Screen parts ---------------------------------------------------------------------
 // None of these touch the alert border (the outer 2 px), so the border can be left alone.
 
+/*******************************************************************************
+ * @brief       Dibuja la barra de estado: WiFi, batería y, en el resultado,
+ *              ENVIADO / NO ENVIADO.
+ *
+ * @details     Limpia la barra y traza su línea inferior (sin pisar el borde de
+ *              alerta); dibuja el icono WiFi (azul con conexión, gris sin
+ *              ella), la batería con su nivel y su porcentaje. En RESULT agrega
+ *              la etiqueta y omite el porcentaje si no entran.
+ *
+ * @param       Entrada: scene, alertLevel, wifiOn, battPct, resultSent - qué
+ *                       mostrar.
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en flushDirty()).
+ *******************************************************************************/
 void drawStatusBar() {
   const bool borderOn = (scene == Scene::MEASURING || scene == Scene::RESULT) && alertLevel != DisplayAlert::NORMAL;
   fillRect(2, 2, W - 4, BAR_LINE_Y - 2, C_BG);
@@ -380,6 +621,18 @@ void drawStatusBar() {
   markDirty(0, 0, W, BAR_LINE_Y + 1);
 }
 
+/*******************************************************************************
+ * @brief       Dibuja el valor de SpO2 (o "--") con su etiqueta.
+ *
+ * @details     Etiqueta «SpO₂», valor grande en el color del nivel (gris si no
+ *              hay valor) y el signo «%».
+ *
+ * @param       Entrada: spo2Value, alertLevel - valor y nivel de alerta.
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en flushDirty()).
+ *******************************************************************************/
 void drawSpo2() {
   fillRect(SPO2_X, 16, 74, 52, C_BG);
   drawText(FONT_S9, SPO2_X * 16, SPO2_LABEL_BASE, "SpO₂", C_TEXT2, TRACK_LABEL, &FONT_S6);
@@ -392,6 +645,18 @@ void drawSpo2() {
   markDirty(SPO2_X, 16, 74, 52);
 }
 
+/*******************************************************************************
+ * @brief       Dibuja el valor de BPM (o "--") con su etiqueta.
+ *
+ * @details     Valor centrado en la columna derecha, blanco (gris si no hay
+ *              valor), y la etiqueta «BPM».
+ *
+ * @param       Entrada: bpmValue - frecuencia cardíaca; <= 0 = sin valor.
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en flushDirty()).
+ *******************************************************************************/
 void drawBpm() {
   fillRect(80, 34, 42, 34, C_BG);
   char text[8] = "--";
@@ -401,6 +666,21 @@ void drawBpm() {
   markDirty(80, 34, 42, 34);
 }
 
+/*******************************************************************************
+ * @brief       Dibuja el corazón con una escala y una opacidad dadas.
+ *
+ * @details     Borra la zona y dibuja el icono precalculado de esa escala con
+ *              opacidad opacityQ x 17. Recuerda lo dibujado para no repetirlo.
+ *
+ * @param       Entrada: scaleIdx - índice de escala (ICON_HEART[]).
+ *              Entrada: opacityQ - opacidad, de 0 a 15.
+ *              Salida:  heartScaleDrawn, heartOpacityDrawn - lo que quedó en
+ *                       pantalla.
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en flushDirty()).
+ *******************************************************************************/
 void drawHeart(int scaleIdx, int opacityQ) {
   fillRect(HEART_X, HEART_Y, HEART_ZONE_W, HEART_ZONE_H, C_BG);
   drawIcon(ICON_HEART[scaleIdx], HEART_X, HEART_Y, C_HEART, (uint8_t)(opacityQ * 17));
@@ -409,6 +689,20 @@ void drawHeart(int scaleIdx, int opacityQ) {
   heartOpacityDrawn = (int8_t)opacityQ;
 }
 
+/*******************************************************************************
+ * @brief       Dibuja el banner inferior: MIDIENDO / COMPLETADO o la alerta de
+ *              SpO2.
+ *
+ * @details     Con nivel normal, un punto verde y «MIDIENDO» (o «COMPLETADO» en
+ *              el resultado). Con precaución o crítico, una barra del color del
+ *              nivel con su icono y «SpO₂ BAJA» o «¡SpO₂ CRÍTICA!».
+ *
+ * @param       Entrada: scene, alertLevel - pantalla y nivel de alerta.
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en flushDirty()).
+ *******************************************************************************/
 void drawBanner() {
   fillRect(BANNER_X, BANNER_Y, BANNER_W, BANNER_H, C_BG);
   const int cx = BANNER_X + BANNER_W / 2;
@@ -431,7 +725,18 @@ void drawBanner() {
   markDirty(BANNER_X, BANNER_Y, BANNER_W, BANNER_H);
 }
 
-// Progress of the measurement: a thin bar right under the banner, in the color of the alert level.
+/*******************************************************************************
+ * @brief       Dibuja la barra de progreso de la medición, bajo el banner.
+ *
+ * @details     Fondo, riel y relleno proporcional a progressPct, en el color
+ *              del nivel de alerta; con progressPct < 0 queda oculta.
+ *
+ * @param       Entrada: progressPct - avance, de 0 a 100; -1 = oculta.
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en flushDirty()).
+ *******************************************************************************/
 void drawProgress() {
   fillRect(PROGRESS_X, PROGRESS_Y, PROGRESS_W, PROGRESS_H, C_BG);
   if (progressPct >= 0) {
@@ -443,8 +748,20 @@ void drawProgress() {
   markDirty(PROGRESS_X, PROGRESS_Y, PROGRESS_W, PROGRESS_H);
 }
 
-// Alert border, 2 px around the whole screen. alpha 0 clears it. The only thing under it
-// that is not black is the status bar's bottom line, which is put back.
+/*******************************************************************************
+ * @brief       Dibuja el borde de alerta de 2 px alrededor de la pantalla.
+ *
+ * @details     Lo borra y mezcla el color del nivel con el alfa recibido (0 lo
+ *              deja borrado). Repone la línea inferior de la barra de estado,
+ *              lo único no negro que hay debajo.
+ *
+ * @param       Entrada: alpha - opacidad del borde, de 0 (borrado) a 255
+ *                       (pleno).
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en flushDirty()).
+ *******************************************************************************/
 void drawBorder(uint8_t alpha) {
   const int strips[4][4] = {{0, 0, W, 2}, {0, H - 2, W, 2}, {0, 2, 2, H - 4}, {W - 2, 2, 2, H - 4}};
   for (const auto &s : strips) fillRect(s[0], s[1], s[2], s[3], C_BG);
@@ -462,6 +779,16 @@ void drawBorder(uint8_t alpha) {
 
 // ---- PPG trace ------------------------------------------------------------------------
 
+/*******************************************************************************
+ * @brief       Calcula la raíz cuadrada entera de un número no negativo.
+ *
+ * @details     Algoritmo bit a bit, solo con enteros: el ESP32-C3 no tiene FPU.
+ *
+ * @param       Entrada: v - número, v >= 0.
+ *              Salida:  retorno (int) - parte entera de la raíz cuadrada.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 int isqrt(int32_t v) {  // integer square root, v >= 0
   int32_t r = 0, bit = 1 << 28;
   while (bit > v) bit >>= 2;
@@ -477,10 +804,23 @@ int isqrt(int32_t v) {  // integer square root, v >= 0
   return (int)r;
 }
 
-// Adds a 2 px wide anti-aliased segment, between the centers of columns i and i+1, to the
-// coverage buffer. y in 1/16 px from the top of the plot. Integer math: the ESP32-C3 has
-// no FPU. The segment is a band of half-width 1 px around the line (distance to the
-// infinite line, 0.5 px ramp) cut 1 px beyond the ends, which also covers the joints.
+/*******************************************************************************
+ * @brief       Agrega un segmento suavizado de 2 px de ancho al buffer de
+ *              cobertura de la traza.
+ *
+ * @details     Une los centros de las columnas i e i+1 con una banda de 1 px de
+ *              semiancho (distancia a la recta, rampa de 0,5 px), cortada 1 px
+ *              más allá de los extremos, lo que también cubre las uniones.
+ *              Aritmética entera: sin FPU.
+ *
+ * @param       Entrada: i - columna de inicio del segmento.
+ *              Entrada: y0, y1 - alturas de los extremos, en 1/16 px desde el
+ *                       borde superior.
+ *              Salida:  cov[] - cobertura de cada píxel (0-16); conserva el
+ *                       máximo.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 void strokeSegment(int i, int32_t y0, int32_t y1) {
   const int32_t dy = y1 - y0;
   const int32_t len = isqrt(256 + dy * dy);
@@ -509,6 +849,25 @@ void strokeSegment(int i, int32_t y0, int32_t y1) {
   }
 }
 
+/*******************************************************************************
+ * @brief       Dibuja el cuadro de la traza del pulso y su curva suavizada.
+ *
+ * @details     Caja con borde, fondo y grilla. Escala el historial con
+ *              trace_scale (un pico se recorta contra el borde y no aplana la
+ *              onda), traza los segmentos en cov[] y los mezcla con el color
+ *              del nivel. Antes de llenar el historial, crece desde la derecha.
+ *
+ * @param       Entrada: hist[], histHead, histCount - historial de columnas de
+ *                       la traza.
+ *              Entrada: traceScale, alertLevel - escala vertical y nivel de
+ *                       alerta.
+ *              Salida:  cov[], plotDirty - cobertura de la traza; plotDirty =
+ *                       false.
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en flushDirty()).
+ *******************************************************************************/
 void drawPlot() {
   // Box: 1 px border, background and grid (a line every 19 px down and 20 px across,
   // starting at the top-left of the inside).
@@ -563,6 +922,19 @@ void drawPlot() {
   plotDirty = false;
 }
 
+/*******************************************************************************
+ * @brief       Agrega una columna al historial de la traza.
+ *
+ * @details     Escribe v en el anillo hist[], avanza histHead e histCount,
+ *              alimenta la escala (trace_scale_push) y marca plotDirty para
+ *              redibujar.
+ *
+ * @param       Entrada: v - valor de la columna (IR filtrado, promediado).
+ *              Salida:  hist[], histHead, histCount, plotDirty - historial
+ *                       actualizado.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 void pushColumn(float v) {
   hist[histHead] = v;
   histHead = (histHead + 1) % PLOT_COLS;
@@ -571,6 +943,18 @@ void pushColumn(float v) {
   plotDirty = true;
 }
 
+/*******************************************************************************
+ * @brief       Vacía la traza para empezar una nueva.
+ *
+ * @details     Pone a cero el historial, la escala y el acumulador de muestras
+ *              por columna.
+ *
+ * @param       Salida:  histCount, histHead, traceScale - historial y escala
+ *                       vacíos.
+ *              Salida:  ppgPhase, ppgSum, ppgCount - acumulador en cero.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 void resetPlot() {
   histCount = 0;
   histHead = 0;
@@ -589,6 +973,18 @@ struct BeatKey {
 constexpr BeatKey BEAT[] = {{0.00f, 0.90f, 0.40f}, {0.10f, 1.28f, 1.00f}, {0.28f, 1.00f, 1.00f},
                             {0.40f, 1.12f, 1.00f}, {0.55f, 0.95f, 0.55f}, {1.00f, 0.90f, 0.40f}};
 
+/*******************************************************************************
+ * @brief       Calcula la escala y la opacidad del corazón en un punto del
+ *              latido.
+ *
+ * @details     Interpola, con salida suave (ease-out), entre los keyframes
+ *              `beat` de BEAT[].
+ *
+ * @param       Entrada: phase - posición en el latido, de 0 a 1.
+ *              Salida:  scale, opacity - escala y opacidad del corazón.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 void beatAt(float phase, float &scale, float &opacity) {
   int i = 0;
   while (i < 4 && phase > BEAT[i + 1].t) i++;
@@ -598,6 +994,24 @@ void beatAt(float phase, float &scale, float &opacity) {
   opacity = BEAT[i].opacity + (BEAT[i + 1].opacity - BEAT[i].opacity) * u;
 }
 
+/*******************************************************************************
+ * @brief       Anima el corazón y lo redibuja si cambió.
+ *
+ * @details     Avanza la fase según el BPM (tras una pausa limita el salto a
+ *              200 ms). En RESULT queda quieto y brillante; sin BPM, quieto y
+ *              tenue. Redibuja solo si cambió la escala o la opacidad
+ *              cuantizadas.
+ *
+ * @param       Entrada: now - millis() actual.
+ *              Entrada: force - true ignora el ritmo de cuadros
+ *                       (HEART_FRAME_MS).
+ *              Entrada: scene, bpmValue - pantalla y frecuencia cardíaca.
+ *              Salida:  heartPhase, heartMs - fase del latido y último cuadro.
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en flushDirty()).
+ *******************************************************************************/
 void updateHeart(uint32_t now, bool force) {
   if (!force && now - heartMs < HEART_FRAME_MS) return;
   uint32_t dt = force ? 0 : now - heartMs;
@@ -624,6 +1038,21 @@ void updateHeart(uint32_t now, bool force) {
 
 // ---- Screens ----------------------------------------------------------------------------
 
+/*******************************************************************************
+ * @brief       Dibuja completa la pantalla de medición (también la de
+ *              resultado).
+ *
+ * @details     Limpia y dibuja barra de estado, SpO2, BPM, corazón, traza y
+ *              banner (y la barra de progreso al medir). Reinicia el parpadeo
+ *              del borde y marca toda la pantalla como modificada.
+ *
+ * @param       Entrada: scene, alertLevel - pantalla y nivel de alerta.
+ *              Salida:  alarmOn, alarmT0 - parpadeo del borde reiniciado.
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en flushDirty()).
+ *******************************************************************************/
 void renderMeasuring() {
   fillRect(0, 0, W, H, C_BG);
   drawStatusBar();
@@ -639,7 +1068,20 @@ void renderMeasuring() {
   markDirty(0, 0, W, H);
 }
 
-// The sensor with its arc; `badge` adds the red "X" of the error screen.
+/*******************************************************************************
+ * @brief       Dibuja el icono del sensor con su arco; con la insignia de error
+ *              si se pide.
+ *
+ * @details     Borra la zona y dibuja el arco (con su opacidad) y el cuerpo del
+ *              sensor; con badge agrega la insignia roja con la «X».
+ *
+ * @param       Entrada: arcOpacity - opacidad del arco, de 0 a 255.
+ *              Entrada: badge - true agrega la insignia de error.
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en flushDirty()).
+ *******************************************************************************/
 void drawNoFingerIcon(uint8_t arcOpacity, bool badge) {
   fillRect(NF_ICON_X, NF_ICON_Y, 42, 40, C_BG);
   drawIcon(ICON_NOFINGER_ARC, NF_ICON_X, NF_ICON_Y, C_TEXT2, arcOpacity);
@@ -651,7 +1093,17 @@ void drawNoFingerIcon(uint8_t arcOpacity, bool badge) {
   markDirty(NF_ICON_X, NF_ICON_Y, 42, 40);
 }
 
-// The `seek` keyframes: the arc fades 1 -> 0.25 -> 1, ease-in-out each way.
+/*******************************************************************************
+ * @brief       Calcula la opacidad del arco animado de «buscando dedo».
+ *
+ * @details     Keyframes `seek`: el arco baja de 1 a 0,25 y vuelve a 1 cada
+ *              SEEK_PERIOD_MS, con ease-in-out en cada tramo.
+ *
+ * @param       Entrada: now - millis() actual.
+ *              Salida:  retorno (int) - opacidad, de 0 a 15.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 int seekOpacityAt(uint32_t now) {
   float p = (now % SEEK_PERIOD_MS) / (float)SEEK_PERIOD_MS;
   float u = p < 0.5f ? p * 2.0f : (1.0f - p) * 2.0f;  // 0 -> 1 -> 0
@@ -659,6 +1111,18 @@ int seekOpacityAt(uint32_t now) {
   return (int)((1.0f - 0.75f * u) * 15.0f + 0.5f);
 }
 
+/*******************************************************************************
+ * @brief       Dibuja la pantalla de error «Dedo no encontrado».
+ *
+ * @details     Barra de estado, icono del sensor con insignia de error y arco
+ *              animado, y los textos «ERROR» y «Dedo no encontrado».
+ *
+ * @param       Salida:  seekOpacityDrawn - opacidad del arco dibujada.
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en flushDirty()).
+ *******************************************************************************/
 void renderNoFinger() {
   fillRect(0, 0, W, H, C_BG);
   drawStatusBar();
@@ -669,7 +1133,20 @@ void renderNoFinger() {
   markDirty(0, 0, W, H);
 }
 
-// Connected (or not), waiting for the finger: the same sensor and animated arc, no error badge.
+/*******************************************************************************
+ * @brief       Dibuja la pantalla «Colocá el dedo»: sensor con arco animado,
+ *              sin insignia de error.
+ *
+ * @details     Barra de estado, icono del sensor sin la insignia y los textos
+ *              «Colocá el dedo» y «en el sensor». Se usa con la conexión ya
+ *              resuelta, a la espera del dedo.
+ *
+ * @param       Salida:  seekOpacityDrawn - opacidad del arco dibujada.
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en flushDirty()).
+ *******************************************************************************/
 void renderWaitFinger() {
   fillRect(0, 0, W, H, C_BG);
   drawStatusBar();
@@ -680,7 +1157,18 @@ void renderWaitFinger() {
   markDirty(0, 0, W, H);
 }
 
-// The big WiFi icon with `step` arcs lit (0 = only the dot); the rest stay dim.
+/*******************************************************************************
+ * @brief       Dibuja el icono grande de WiFi con `step` arcos encendidos.
+ *
+ * @details     El punto siempre en pleno; los arcos hasta `step` en pleno y el
+ *              resto tenues (CONN_ARC_DIM).
+ *
+ * @param       Entrada: step - arcos encendidos, de 0 (solo el punto) a 3.
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en flushDirty()).
+ *******************************************************************************/
 void drawConnIcon(int step) {
   fillRect(CONN_ICON_X, CONN_ICON_Y, 48, 34, C_BG);
   drawIcon(ICON_WIFIBIG_DOT, CONN_ICON_X, CONN_ICON_Y, C_WIFI);
@@ -690,6 +1178,19 @@ void drawConnIcon(int step) {
   markDirty(CONN_ICON_X, CONN_ICON_Y, 48, 34);
 }
 
+/*******************************************************************************
+ * @brief       Dibuja la pantalla «Conectando»: icono de WiFi animado y
+ *              subtítulo.
+ *
+ * @details     Barra de estado, icono con 0 arcos encendidos y los textos
+ *              «Conectando» y «WiFi y nube». Reinicia la animación.
+ *
+ * @param       Salida:  connStep, connMs - animación reiniciada.
+ *              Salida:  fb - frame buffer: píxeles dibujados.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en flushDirty()).
+ *******************************************************************************/
 void renderConnecting() {
   fillRect(0, 0, W, H, C_BG);
   drawStatusBar();
@@ -705,11 +1206,36 @@ void renderConnecting() {
 
 // ---- Public API ---------------------------------------------------------------------------
 
+/*******************************************************************************
+ * @brief       Calcula el nivel de alerta de una lectura de SpO2.
+ *
+ * @details     NORMAL con SpO2 >= DISPLAY_SPO2_NORMAL_MIN (96) o sin valor (<=
+ *              0); CAUTION desde DISPLAY_SPO2_CAUTION_MIN (93); CRITICAL por
+ *              debajo.
+ *
+ * @param       Entrada: spo2 - SpO2, en %.
+ *              Salida:  retorno (DisplayAlert) - NORMAL, CAUTION o CRITICAL.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 DisplayAlert displayAlertFor(int spo2) {
   if (spo2 <= 0 || spo2 >= DISPLAY_SPO2_NORMAL_MIN) return DisplayAlert::NORMAL;
   return spo2 >= DISPLAY_SPO2_CAUTION_MIN ? DisplayAlert::CAUTION : DisplayAlert::CRITICAL;
 }
 
+/*******************************************************************************
+ * @brief       Inicializa la pantalla y reserva sus buffers.
+ *
+ * @details     Reserva el frame buffer (128x128 RGB565, 32 KB) y el buffer de
+ *              cobertura de la traza; si falta RAM los libera y devuelve false
+ *              (el resto de las llamadas quedan sin efecto). Llama a tftBegin()
+ *              y deja el backlight apagado hasta la primera pantalla.
+ *
+ * @param       Salida:  retorno (bool) - false si no hubo RAM.
+ *              Salida:  fb, cov, blPending - buffers y backlight pendiente.
+ *
+ * @peripherals Internos: SPI, GPIO (vía tftBegin()). Externos: pantalla TFT.
+ *******************************************************************************/
 bool displayBegin() {
   if (fb) return true;
   fb = (uint16_t *)malloc(W * H * sizeof(uint16_t));
@@ -726,6 +1252,20 @@ bool displayBegin() {
   return true;
 }
 
+/*******************************************************************************
+ * @brief       Fija el estado de la barra superior: WiFi y batería.
+ *
+ * @details     Limita la batería a 100. En la pantalla de resultado el icono
+ *              WiFi lo manda el resultado (enviado o no) y no se cambia.
+ *              Redibuja la barra solo si algo cambió.
+ *
+ * @param       Entrada: wifiConnected - true si hay conexión.
+ *              Entrada: batteryPct - batería, de 0 a 100 %.
+ *              Salida:  wifiOn, battPct - estado mostrado.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en displayUpdate()).
+ *******************************************************************************/
 void displaySetStatus(bool wifiConnected, uint8_t batteryPct) {
   if (!fb) return;
   if (batteryPct > 100) batteryPct = 100;
@@ -736,6 +1276,23 @@ void displaySetStatus(bool wifiConnected, uint8_t batteryPct) {
   if (scene != Scene::NONE) drawStatusBar();
 }
 
+/*******************************************************************************
+ * @brief       Muestra los valores de SpO2 y BPM en la pantalla de medición.
+ *
+ * @details     Un valor <= 0 se ve como "--". Si la pantalla es nueva o cambia
+ *              el nivel de alerta redibuja todo; si no, solo el valor que
+ *              cambió.
+ *
+ * @param       Entrada: spo2, bpm - SpO2 (%) y frecuencia cardíaca; <= 0 = sin
+ *                       valor.
+ *              Salida:  scene, alertLevel, spo2Value, bpmValue - estado
+ *                       mostrado.
+ *              Salida:  progressPct, heartPhase - reiniciados si la pantalla es
+ *                       nueva.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en displayUpdate()).
+ *******************************************************************************/
 void displaySetMeasuring(int spo2, int bpm) {
   if (!fb) return;
   if (spo2 > 100) spo2 = 100;
@@ -764,6 +1321,18 @@ void displaySetMeasuring(int spo2, int bpm) {
   if (bpmChanged) drawBpm();
 }
 
+/*******************************************************************************
+ * @brief       Pasa a la pantalla de error «Dedo no encontrado».
+ *
+ * @details     Pone la escena NO_FINGER, borra los valores y el nivel de alerta
+ *              y la dibuja. No hace nada si ya está en esa pantalla.
+ *
+ * @param       Salida:  scene, alertLevel, spo2Value, bpmValue - estado
+ *                       mostrado.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en displayUpdate()).
+ *******************************************************************************/
 void displaySetNoFinger() {
   if (!fb || scene == Scene::NO_FINGER) return;
   scene = Scene::NO_FINGER;
@@ -773,6 +1342,17 @@ void displaySetNoFinger() {
   renderNoFinger();
 }
 
+/*******************************************************************************
+ * @brief       Pasa a la pantalla «Conectando».
+ *
+ * @details     Pone la escena CONNECTING con alerta NORMAL y la dibuja. No hace
+ *              nada si ya está en esa pantalla.
+ *
+ * @param       Salida:  scene, alertLevel - estado mostrado.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en displayUpdate()).
+ *******************************************************************************/
 void displaySetConnecting() {
   if (!fb || scene == Scene::CONNECTING) return;
   scene = Scene::CONNECTING;
@@ -780,6 +1360,18 @@ void displaySetConnecting() {
   renderConnecting();
 }
 
+/*******************************************************************************
+ * @brief       Pasa a la pantalla «Colocá el dedo», con la conexión ya
+ *              resuelta.
+ *
+ * @details     Pone la escena WAIT_FINGER con alerta NORMAL y la dibuja. No
+ *              hace nada si ya está en esa pantalla.
+ *
+ * @param       Salida:  scene, alertLevel - estado mostrado.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en displayUpdate()).
+ *******************************************************************************/
 void displaySetWaitFinger() {
   if (!fb || scene == Scene::WAIT_FINGER) return;
   scene = Scene::WAIT_FINGER;
@@ -787,6 +1379,18 @@ void displaySetWaitFinger() {
   renderWaitFinger();
 }
 
+/*******************************************************************************
+ * @brief       Fija el avance de la barra de progreso de la medición.
+ *
+ * @details     De 0 a 100; un valor negativo la oculta. Solo se redibuja en la
+ *              pantalla de medición y si el valor cambió.
+ *
+ * @param       Entrada: pct - avance en %, o negativo para ocultar.
+ *              Salida:  progressPct - avance mostrado.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en displayUpdate()).
+ *******************************************************************************/
 void displaySetProgress(int pct) {
   if (!fb) return;
   if (pct > 100) pct = 100;
@@ -796,6 +1400,22 @@ void displaySetProgress(int pct) {
   if (scene == Scene::MEASURING) drawProgress();
 }
 
+/*******************************************************************************
+ * @brief       Muestra la pantalla de resultado final de la medición.
+ *
+ * @details     Es la pantalla de medición congelada: valores, última traza
+ *              (vacía si no se venía midiendo), corazón quieto, «COMPLETADO» o
+ *              el banner del nivel, y en la barra ENVIADO / NO ENVIADO (WiFi
+ *              azul si llegó a la nube).
+ *
+ * @param       Entrada: spo2, bpm - resultado; <= 0 se ve como "--".
+ *              Entrada: sent - true si la medición llegó a la nube.
+ *              Salida:  scene, resultSent, wifiOn, spo2Value, bpmValue,
+ *                       alertLevel - estado mostrado.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en displayUpdate()).
+ *******************************************************************************/
 void displaySetResult(int spo2, int bpm, bool sent) {
   if (!fb) return;
   if (spo2 > 100) spo2 = 100;
@@ -810,6 +1430,22 @@ void displaySetResult(int spo2, int bpm, bool sent) {
   renderMeasuring();
 }
 
+/*******************************************************************************
+ * @brief       Agrega una muestra de la señal PPG a la traza de la pantalla.
+ *
+ * @details     Promedia las muestras que caen en cada columna
+ *              (DISPLAY_PPG_PX_PER_S columnas por segundo sobre
+ *              DISPLAY_PPG_INPUT_HZ muestras) y, al completar una, la empuja al
+ *              historial. Es barata: no dibuja.
+ *
+ * @param       Entrada: sample - IR filtrado, con el latido hacia arriba.
+ *              Salida:  ppgSum, ppgCount, ppgPhase - acumulador de la columna
+ *                       en curso.
+ *              Salida:  hist[], plotDirty - historial, cuando se completa una
+ *                       columna.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 void displayPushPpg(float sample) {
   if (!fb) return;
   ppgSum += sample;
@@ -823,6 +1459,17 @@ void displayPushPpg(float sample) {
   }
 }
 
+/*******************************************************************************
+ * @brief       Apaga la pantalla para dormir.
+ *
+ * @details     Apaga el backlight y pone el controlador en DISPOFF + SLPIN; el
+ *              frame buffer se conserva. No hace nada si no hay pantalla o ya
+ *              duerme.
+ *
+ * @param       Salida:  asleep - true.
+ *
+ * @peripherals Internos: GPIO (backlight), SPI. Externos: pantalla TFT.
+ *******************************************************************************/
 void displaySleep() {
   if (!fb || asleep) return;
   asleep = true;
@@ -832,6 +1479,18 @@ void displaySleep() {
   tft.enableSleep(true);     // SLPIN
 }
 
+/*******************************************************************************
+ * @brief       Despierta la pantalla: la redibuja entera y recién entonces
+ *              prende el backlight.
+ *
+ * @details     SLPOUT (el controlador necesita 120 ms), DISPON, reenvía todo el
+ *              frame buffer y después enciende el backlight, para no mostrar
+ *              basura.
+ *
+ * @param       Salida:  asleep, blPending - false.
+ *
+ * @peripherals Internos: SPI, GPIO (backlight). Externos: pantalla TFT.
+ *******************************************************************************/
 void displayWake() {
   if (!fb || !asleep) return;
   TftPanel &tft = tftScreen();
@@ -845,6 +1504,20 @@ void displayWake() {
   tftBacklight(true);
 }
 
+/*******************************************************************************
+ * @brief       Retiene o libera los pines de la pantalla durante el sueño.
+ *
+ * @details     Con hold = true deja el backlight apagado y CS y RST en alto, y
+ *              los congela con gpio_hold_en: la pantalla sigue dormida y
+ *              oscura. Con false los libera; hacerlo apenas se despierta, antes
+ *              de displayBegin().
+ *
+ * @param       Entrada: hold - true = retener, false = liberar.
+ *
+ * @peripherals Internos: GPIO (modo y retención de backlight, CS y RST),
+ *              light/deep sleep.
+ *              Externos: pantalla TFT (backlight, CS y RST).
+ *******************************************************************************/
 void displayHoldPins(bool hold) {
   const gpio_num_t pins[] = {(gpio_num_t)PIN_BL_TFT, (gpio_num_t)PIN_CS_TFT, (gpio_num_t)PIN_RST_TFT};
   if (hold) {
@@ -860,6 +1533,21 @@ void displayHoldPins(bool hold) {
   }
 }
 
+/*******************************************************************************
+ * @brief       Corre las animaciones y manda al panel lo que cambió.
+ *
+ * @details     Llamar en cada vuelta del loop(). Anima el corazón y la traza al
+ *              medir, el borde parpadeante de CRITICAL, el arco de «buscando
+ *              dedo» y los arcos de «Conectando»; luego flushDirty() y, tras la
+ *              primera pantalla, enciende el backlight.
+ *
+ * @param       Entrada: scene, alertLevel, asleep, blPending - qué animar y si
+ *                       hay que prender la luz.
+ *              Salida:  estado de las animaciones - heartMs, plotMs, seekMs,
+ *                       connMs, alarmOn...
+ *
+ * @peripherals Internos: SPI, GPIO (backlight). Externos: pantalla TFT.
+ *******************************************************************************/
 void displayUpdate() {
   if (!fb || asleep) return;
   const uint32_t now = millis();

@@ -43,6 +43,17 @@
 #define FLAT_PX 8.0f
 #define WARMUP_COLS (6 * 48)
 
+/*******************************************************************************
+ * @brief       Busca una columna por nombre en la cabecera de un CSV.
+ *
+ * @details     Recorre con strtok los nombres separados por comas, sobre una
+ *              copia de la cabecera.
+ *
+ * @param       Entrada: header, name - cabecera del CSV y nombre buscado.
+ *              Salida:  retorno (int) - índice de la columna, o -1 si no está.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static int column(const char *header, const char *name) {
   char copy[LINE_MAX_LEN];
   strncpy(copy, header, sizeof(copy) - 1);
@@ -54,6 +65,17 @@ static int column(const char *header, const char *name) {
   return -1;
 }
 
+/*******************************************************************************
+ * @brief       Lee el campo número idx de una línea CSV como entero sin signo.
+ *
+ * @details     Salta idx comas y convierte con strtoul.
+ *
+ * @param       Entrada: line, idx - línea CSV y número de campo.
+ *              Salida:  out - valor leído.
+ *              Salida:  retorno (int) - 1 si había un número; 0 si no.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static int field(const char *line, int idx, unsigned long *out) {
   const char *s = line;
   for (int i = 0; i < idx; i++) {
@@ -77,6 +99,19 @@ static TraceScale scale;                 // ahora
 static float oldLo, oldHi;               // antes
 static int oldValid;
 
+/*******************************************************************************
+ * @brief       Reinicia la traza simulada y las dos escalas.
+ *
+ * @details     Vacía el historial y el acumulador de columnas, reinicia la
+ *              escala nueva (trace_scale) y marca inválida la vieja.
+ *
+ * @param       Salida:  histHead, histCount, ppgCount, ppgPhase, ppgSum - en
+ *                       cero.
+ *              Salida:  scale, oldValid - escala nueva reiniciada; escala vieja
+ *                       inválida.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static void reset_trace(void) {
   histHead = histCount = ppgCount = 0;
   ppgPhase = ppgSum = 0.0f;
@@ -84,7 +119,20 @@ static void reset_trace(void) {
   oldValid = 0;
 }
 
-// displayPushPpg() + pushColumn() of display.cpp.
+/*******************************************************************************
+ * @brief       Simula displayPushPpg() + pushColumn() de display.cpp.
+ *
+ * @details     Promedia las muestras que caen en cada columna (PX_PER_S sobre
+ *              SENSOR_FS_HZ) y, al completar una, la guarda en hist[] y la pasa
+ *              a trace_scale_push().
+ *
+ * @param       Entrada: v - muestra del IR filtrado (ir_view).
+ *              Salida:  hist[], histHead, histCount - historial de la traza.
+ *              Salida:  ppgSum, ppgCount, ppgPhase, scale - acumulador y escala
+ *                       nueva.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static void push_sample(float v) {
   ppgSum += v;
   ppgCount++;
@@ -99,8 +147,20 @@ static void push_sample(float v) {
   ppgCount = 0;
 }
 
-// Height in px of the last second of the trace drawn with the scale lo..hi; *clipped gets how
-// many of its columns hit the edge of the plot.
+/*******************************************************************************
+ * @brief       Calcula la altura, en píxeles, del último segundo de traza con
+ *              la escala lo..hi.
+ *
+ * @details     Replica el dibujo de display.cpp (rango mínimo, recorte contra
+ *              el borde del plot) y cuenta las columnas recortadas.
+ *
+ * @param       Entrada: lo, hi - escala vertical a probar.
+ *              Entrada: hist[], histHead - historial de la traza.
+ *              Salida:  clipped - columnas que tocan el borde del plot.
+ *              Salida:  retorno (float) - altura del último segundo, en px.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static float last_second_height(float lo, float hi, int *clipped) {
   float span = hi - lo, base = lo;
   if (span < MIN_SPAN) {
@@ -127,6 +187,19 @@ typedef struct {
   long clipped_cols, clipped_frames;
 } Stats;
 
+/*******************************************************************************
+ * @brief       Acumula las estadísticas de un cuadro: altura, recorte y rachas
+ *              aplanadas.
+ *
+ * @details     Guarda la altura, suma las columnas recortadas, cuenta si el
+ *              cuadro quedó aplanado (h < FLAT_PX) y lleva la racha aplanada
+ *              más larga.
+ *
+ * @param       Entrada: h, clipped - altura del cuadro y columnas recortadas.
+ *              Salida:  s - estadísticas acumuladas.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static void stats_add(Stats *s, float h, int clipped) {
   s->h[s->n++] = h;
   s->clipped_cols += clipped;
@@ -139,11 +212,32 @@ static void stats_add(Stats *s, float h, int clipped) {
   }
 }
 
+/*******************************************************************************
+ * @brief       Compara dos float, para qsort().
+ *
+ * @details     Devuelve -1, 0 o 1 según el orden de a y b.
+ *
+ * @param       Entrada: a, b - punteros a los dos float.
+ *              Salida:  retorno (int) - -1, 0 o 1.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static int cmp_float(const void *a, const void *b) {
   float x = *(const float *)a, y = *(const float *)b;
   return (x > y) - (x < y);
 }
 
+/*******************************************************************************
+ * @brief       Imprime las estadísticas de una de las dos escalas.
+ *
+ * @details     Ordena las alturas y muestra mediana, p10, % de cuadros
+ *              aplanados, racha aplanada máxima y recorte.
+ *
+ * @param       Entrada: name, s - nombre de la escala y sus estadísticas.
+ *              Salida:  s->h - queda ordenado.
+ *
+ * @peripherals Ninguno (programa de PC: imprime por la salida estándar).
+ *******************************************************************************/
 static void stats_print(const char *name, Stats *s) {
   if (s->n == 0) {
     printf("  %-6s sin cuadros\n", name);
@@ -157,6 +251,23 @@ static void stats_print(const char *name, Stats *s) {
          100.0 * s->clipped_frames / s->n);
 }
 
+/*******************************************************************************
+ * @brief       Compara la escala vertical de la traza, antes y después de
+ *              trace_scale.c, sobre una captura.
+ *
+ * @details     Pasa cada muestra por el procesador PPG, arma la traza como
+ *              display.cpp y, en cada cuadro (FRAME_SAMPLES), compara la escala
+ *              vieja (mín y máx) con la nueva (trace_scale) midiendo la altura
+ *              del último segundo. Opciones: --spike, --press, --csv.
+ *
+ * @param       Entrada: argc, argv - captura.csv y opciones.
+ *              Salida:  retorno (int) - 0 = bien; 1 = error de archivo o
+ *                       columnas; 2 = uso.
+ *              Salida:  salida estándar y --csv - estadísticas y una fila por
+ *                       cuadro.
+ *
+ * @peripherals Ninguno (programa de PC: solo lee y escribe archivos).
+ *******************************************************************************/
 int main(int argc, char **argv) {
   if (argc < 2) {
     fprintf(stderr, "uso: %s captura.csv [--spike S] [--press S PCT [LEN]] [--csv out.csv]\n", argv[0]);

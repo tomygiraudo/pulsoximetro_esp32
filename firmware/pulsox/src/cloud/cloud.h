@@ -45,8 +45,31 @@ class CloudDb {
   CloudDb(const char* dbHost, const char* deviceId);
 
   bool login();                          // signInWithPassword; false and logs the reason on failure
+
+  /*******************************************************************************
+   * @brief       Devuelve el uid del usuario con el que se inició sesión.
+   *
+   * @details     Devuelve uid_ (lo llena login()); vacío si todavía no hubo
+   *              login.
+   *
+   * @param       Entrada: uid_ - uid obtenido en el login.
+   *              Salida:  retorno (const String&) - ese uid.
+   *
+   * @peripherals Ninguno.
+   *******************************************************************************/
   const String& uid() const { return uid_; }
 
+  /*******************************************************************************
+   * @brief       Cierra la conexión TLS persistente con la base.
+   *
+   * @details     Llama a dbClient_.stop(); se usa antes de apagar el WiFi. El
+   *              próximo pedido vuelve a conectar.
+   *
+   * @param       Salida:  dbClient_ - conexión cerrada.
+   *
+   * @peripherals Internos: bloque WiFi (conexión TLS).
+   *              Externos: Firebase Realtime Database.
+   *******************************************************************************/
   void disconnect() { dbClient_.stop(); }  // drops the persistent DB connection (before WiFi goes off)
 
   void expireToken();                    // the next call renews the token (command `r`)
@@ -57,8 +80,42 @@ class CloudDb {
   int del(const char* path);
   int post(const char* path, const char* json, String* pushKey = nullptr);
 
+  /*******************************************************************************
+   * @brief       Devuelve la latencia del último pedido que llegó a la red.
+   *
+   * @details     Devuelve lastLatencyMs_, en milisegundos.
+   *
+   * @param       Entrada: lastLatencyMs_ - latencia del último pedido.
+   *              Salida:  retorno (uint32_t) - esa latencia, en ms.
+   *
+   * @peripherals Ninguno.
+   *******************************************************************************/
   uint32_t lastLatencyMs() const { return lastLatencyMs_; }
+
+  /*******************************************************************************
+   * @brief       Devuelve el texto de error de Firebase de la última llamada
+   *              fallida.
+   *
+   * @details     Devuelve lastError_; vacío si la última llamada salió bien.
+   *
+   * @param       Entrada: lastError_ - texto del último error.
+   *              Salida:  retorno (const String&) - ese texto.
+   *
+   * @peripherals Ninguno.
+   *******************************************************************************/
   const String& lastError() const { return lastError_; }  // Firebase "error" text of the last failed call
+
+  /*******************************************************************************
+   * @brief       Devuelve los contadores de uso de la nube.
+   *
+   * @details     Devuelve stats_: llamadas ok y fallidas, latencias, handshakes
+   *              TLS, logins y renovaciones.
+   *
+   * @param       Entrada: stats_ - contadores acumulados.
+   *              Salida:  retorno (const CloudStats&) - esos contadores.
+   *
+   * @peripherals Ninguno.
+   *******************************************************************************/
   const CloudStats& stats() const { return stats_; }
 
  private:

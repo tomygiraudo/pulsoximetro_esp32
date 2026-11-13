@@ -1,8 +1,8 @@
 // Cascade of second-order sections (biquads), direct form II transposed, in
 // double: the same structure and arithmetic as scipy.signal.sosfilt. Double rather
-// than float because the 0.2 Hz low-pass at 100 Hz has poles very close to the unit
-// circle, where float loses accuracy; the ESP32-C3 has no FPU, but at 100 samples/s
-// the cost is small either way.
+// than float because the 0.2 Hz low-pass at 50 Hz has poles very close to the unit
+// circle, where float loses accuracy; the ESP32-C3 has no FPU, but at 50 samples/s
+// the cost is small either way (50 samples/s = 400 sps averaged by 8).
 // Plain C, no Arduino dependency.
 #pragma once
 #ifdef __cplusplus

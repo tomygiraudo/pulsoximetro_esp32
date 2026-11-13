@@ -5,7 +5,7 @@
 //   pio run -e ui-demo -t upload
 //
 // Serial prints which screen is up and, every second, the longest displayUpdate() so
-// far: it has to stay well under the 320 ms the MAX30102's FIFO holds.
+// far: it has to stay well under the 640 ms the MAX30102's FIFO holds.
 #ifdef PULSOX_DISPLAY_DEMO
 #include <Arduino.h>
 #include <math.h>
@@ -56,6 +56,20 @@ static float pulsePhase = 0.0f;  // 0-1 within the fake heartbeat
 static uint32_t worstUs = 0;
 static uint32_t reportAt = 0;
 
+/*******************************************************************************
+ * @brief       Aplica el paso actual de la demo: muestra su pantalla con sus
+ *              datos.
+ *
+ * @details     Loguea el nombre, fija la barra de estado y llama a la función
+ *              de pantalla que corresponde al tipo de paso (conectando, esperar
+ *              dedo, sin dedo, midiendo con progreso o resultado).
+ *
+ * @param       Entrada: step, STEPS[] - paso actual y tabla de pasos.
+ *              Salida:  stepAt - instante en que empezó el paso.
+ *
+ * @peripherals Internos: Serial/USB-CDC (log).
+ *              Externos: pantalla TFT (se escribe luego en displayUpdate()).
+ *******************************************************************************/
 static void applyStep() {
   const DemoStep &s = STEPS[step];
   DBG("UI", "%s", s.name);
@@ -73,8 +87,18 @@ static void applyStep() {
   stepAt = millis();
 }
 
-// One PPG sample of a fake pulse: a systolic peak and a smaller dicrotic bump, pointing
-// up, on a DC level like the one the real signal has before filtering.
+/*******************************************************************************
+ * @brief       Genera una muestra de un pulso falso.
+ *
+ * @details     Suma un pico sistólico y una joroba dicrótica más chica (dos
+ *              gaussianas), hacia arriba, sobre un DC de 20000 como el de la
+ *              señal real antes de filtrar.
+ *
+ * @param       Entrada: phase - posición en el latido, de 0 a 1.
+ *              Salida:  retorno (float) - muestra del pulso falso.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static float fakeSample(float phase) {
   auto bump = [](float x, float center, float width) {
     float d = (x - center) / width;
@@ -83,6 +107,17 @@ static float fakeSample(float phase) {
   return 20000.0f + 1000.0f * (bump(phase, 0.14f, 0.045f) + 0.38f * bump(phase, 0.36f, 0.07f));
 }
 
+/*******************************************************************************
+ * @brief       Inicia Serial y la pantalla y arranca la demo.
+ *
+ * @details     Espera al monitor (SERIAL_WAIT_MS), inicia la pantalla (si no
+ *              hay RAM avisa y sale) y muestra el primer paso.
+ *
+ * @param       Salida:  nextSample, reportAt - temporizadores de la demo.
+ *
+ * @peripherals Internos: Serial/USB-CDC, SPI, GPIO (vía displayBegin()).
+ *              Externos: pantalla TFT.
+ *******************************************************************************/
 void setup() {
   Serial.begin(115200);
   uint32_t start = millis();
@@ -100,6 +135,22 @@ void setup() {
   reportAt = millis() + 1000;
 }
 
+/*******************************************************************************
+ * @brief       Recorre las pantallas con datos falsos y mide el peor
+ *              displayUpdate().
+ *
+ * @details     Cada STEP_MS pasa al paso siguiente. Alimenta la traza con un
+ *              pulso falso al ritmo real de muestreo (con un golpe opcional),
+ *              corre displayUpdate() y cada segundo imprime su peor tiempo.
+ *
+ * @param       Entrada: step, STEPS[] - paso actual y tabla de pasos.
+ *              Salida:  step, pulsePhase, nextSample - avance de la demo.
+ *              Salida:  worstUs, reportAt - peor tiempo de displayUpdate() y
+ *                       próximo informe.
+ *
+ * @peripherals Internos: SPI, GPIO (backlight), Serial/USB-CDC.
+ *              Externos: pantalla TFT.
+ *******************************************************************************/
 void loop() {
   uint32_t now = millis();
   if (now - stepAt >= STEP_MS) {

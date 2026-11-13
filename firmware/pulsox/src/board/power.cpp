@@ -9,12 +9,36 @@
 #include "debug/serial_stream.h"
 #include "board/status_led.h"
 
+/*******************************************************************************
+ * @brief       Libera los pines que un deep sleep dejó retenidos.
+ *
+ * @details     Primera llamada de setup(): quita la retención global de deep
+ *              sleep, la del LED de estado y la de los pines de la pantalla,
+ *              para poder manejarlos.
+ *
+ * @param       Ninguno.
+ *
+ * @peripherals Internos: GPIO (retención de pines), light/deep sleep.
+ *              Externos: LED de estado, pantalla TFT (backlight, CS y RST).
+ *******************************************************************************/
 void powerBegin() {
   gpio_deep_sleep_hold_dis();
   gpio_hold_dis((gpio_num_t)PIN_LED);
   displayHoldPins(false);
 }
 
+/*******************************************************************************
+ * @brief       Dice por qué despertó el chip.
+ *
+ * @details     Traduce esp_sleep_get_wakeup_cause(): GPIO = botón, temporizador
+ *              = el reintento de un botón trabado, cualquier otra causa =
+ *              arranque en frío.
+ *
+ * @param       Salida:  retorno (Wake) - BUTTON, TIMER o COLD_BOOT.
+ *
+ * @peripherals Internos: light/deep sleep (causa de despertar).
+ *              Externos: Ninguno.
+ *******************************************************************************/
 Wake powerWakeReason() {
   switch (esp_sleep_get_wakeup_cause()) {
     case ESP_SLEEP_WAKEUP_GPIO: return Wake::BUTTON;
@@ -23,6 +47,17 @@ Wake powerWakeReason() {
   }
 }
 
+/*******************************************************************************
+ * @brief       Devuelve el motivo del despertar como texto.
+ *
+ * @details     Para los logs: botón (GPIO0), temporizador (botón trabado) o
+ *              arranque en frío.
+ *
+ * @param       Entrada: w - motivo del despertar.
+ *              Salida:  retorno (const char *) - texto del motivo.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 const char *powerWakeText(Wake w) {
   switch (w) {
     case Wake::BUTTON: return "boton (GPIO0)";
@@ -31,9 +66,21 @@ const char *powerWakeText(Wake w) {
   }
 }
 
-// What is common to every mode: the button must be up (a wakeup by level would fire at once), and
-// the LED dark. False if the button is still down after BUTTON_RELEASE_WAIT_MS: then the sleep is
-// on a timer, to look again, not on the button.
+/*******************************************************************************
+ * @brief       Prepara lo común a todos los modos de sueño: botón suelto y LED
+ *              apagado.
+ *
+ * @details     Espera hasta BUTTON_RELEASE_WAIT_MS a que suelten el botón (un
+ *              despertar por nivel dispararía enseguida) y apaga el LED de
+ *              estado. Si sigue apretado, el sueño será con temporizador
+ *              (BUTTON_STUCK_RETRY_S) para volver a mirar.
+ *
+ * @param       Salida:  retorno (bool) - true si el botón estaba suelto; false
+ *                       si sigue apretado.
+ *
+ * @peripherals Internos: GPIO, Serial/USB-CDC (log).
+ *              Externos: botón, LED de estado.
+ *******************************************************************************/
 static bool prepareToSleep() {
   const bool released = buttonWaitRelease(BUTTON_RELEASE_WAIT_MS);
   if (!released) {
@@ -46,6 +93,24 @@ static bool prepareToSleep() {
 
 #if POWER_SLEEP_MODE == POWER_SLEEP_LIGHT
 
+/*******************************************************************************
+ * @brief       Versión POWER_SLEEP_LIGHT (por defecto): duerme en light sleep
+ *              hasta que el botón despierte.
+ *
+ * @details     Retiene los pines de pantalla y LED, arma el despertar por nivel
+ *              bajo de GPIO0 (o un temporizador si el botón estaba trabado) y
+ *              entra en light sleep: la RAM se conserva y vuelve a este punto.
+ *              Si despertó el temporizador repite el ciclo.
+ *
+ * @param       Entrada: PIN_BUTTON, BUTTON_STUCK_RETRY_S - pin de despertar y
+ *                       reintento del botón trabado.
+ *              Salida:  retorno (void) - vuelve al despertar por el botón, sin
+ *                       reportar esa pulsación.
+ *
+ * @peripherals Internos: light sleep, GPIO (wakeup y retención), temporizador,
+ *              Serial/USB-CDC.
+ *              Externos: botón, pantalla TFT (pines retenidos), LED de estado.
+ *******************************************************************************/
 void powerSleep() {
   for (;;) {  // loops only if the button was stuck: the timer wakes it to look again
     const bool released = prepareToSleep();
@@ -76,6 +141,24 @@ void powerSleep() {
 
 #elif POWER_SLEEP_MODE == POWER_SLEEP_DEEP
 
+/*******************************************************************************
+ * @brief       Versión POWER_SLEEP_DEEP: deep sleep (~5 uA); despertar =
+ *              reinicio del chip.
+ *
+ * @details     Igual que la versión light, pero con deep sleep: además de los
+ *              pines retiene los GPIO globalmente y arma el despertar de GPIO0
+ *              por nivel bajo. No vuelve: al despertar corre setup() otra vez.
+ *              Necesita R5 <= ~3 kOhm en la placa del botón.
+ *
+ * @param       Entrada: PIN_BUTTON, BUTTON_STUCK_RETRY_S - pin de despertar y
+ *                       reintento del botón trabado.
+ *              Salida:  retorno (void) - no vuelve: el chip se reinicia al
+ *                       despertar.
+ *
+ * @peripherals Internos: deep sleep, GPIO (wakeup y retención), temporizador,
+ *              Serial/USB-CDC.
+ *              Externos: botón, pantalla TFT (pines retenidos), LED de estado.
+ *******************************************************************************/
 void powerSleep() {
   const bool released = prepareToSleep();
   displayHoldPins(true);
@@ -93,6 +176,21 @@ void powerSleep() {
 
 #else  // POWER_SLEEP_SIM
 
+/*******************************************************************************
+ * @brief       Versión POWER_SLEEP_SIM (env dev): sueño simulado, el CPU y el
+ *              USB siguen activos.
+ *
+ * @details     Prepara el sueño y descarta una pulsación pendiente; espera
+ *              atendiendo comandos seriales hasta que el botón o el comando 'b'
+ *              lo despierten. Con BUTTON_LOG_RAW loguea el nivel de GPIO0 cada
+ *              2 s.
+ *
+ * @param       Salida:  retorno (void) - vuelve cuando se aprieta el botón (o
+ *                       llega 'b').
+ *
+ * @peripherals Internos: GPIO (botón), Serial/USB-CDC.
+ *              Externos: botón, LED de estado (se apaga).
+ *******************************************************************************/
 void powerSleep() {
   prepareToSleep();
   DBG("PWR", "sueno SIMULADO (env dev): USB y CPU siguen; el boton o 'b' despiertan");

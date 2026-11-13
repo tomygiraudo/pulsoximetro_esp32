@@ -22,7 +22,17 @@
 
 #define LINE_MAX_LEN 512
 
-// Index of the column called `name` in a comma-separated header, or -1.
+/*******************************************************************************
+ * @brief       Busca una columna por nombre en la cabecera de un CSV.
+ *
+ * @details     Recorre con strtok los nombres separados por comas, sobre una
+ *              copia de la cabecera.
+ *
+ * @param       Entrada: header, name - cabecera del CSV y nombre buscado.
+ *              Salida:  retorno (int) - índice de la columna, o -1 si no está.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static int column(const char *header, const char *name) {
   char copy[LINE_MAX_LEN];
   strncpy(copy, header, sizeof(copy) - 1);
@@ -34,7 +44,17 @@ static int column(const char *header, const char *name) {
   return -1;
 }
 
-// The `idx`-th comma-separated field of `line` as an unsigned integer.
+/*******************************************************************************
+ * @brief       Lee el campo número idx de una línea CSV como entero sin signo.
+ *
+ * @details     Salta idx comas y convierte con strtoul.
+ *
+ * @param       Entrada: line, idx - línea CSV y número de campo.
+ *              Salida:  out - valor leído.
+ *              Salida:  retorno (int) - 1 si había un número; 0 si no.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static int field(const char *line, int idx, unsigned long *out) {
   const char *s = line;
   for (int i = 0; i < idx; i++) {
@@ -49,6 +69,23 @@ static int field(const char *line, int idx, unsigned long *out) {
 
 static PpgProcessor ppg;  // ~8 KB: static, as in the firmware
 
+/*******************************************************************************
+ * @brief       Corre el pipeline PPG sobre un CSV de captura y escribe los
+ *              resultados.
+ *
+ * @details     Lee n, red e ir de cada fila y las pasa por ppg_push(). Escribe
+ *              la línea D de cada muestra y la R de cada segundo en
+ *              <salida>.csv y <salida>_results.csv, sin el prefijo "D," / "R,",
+ *              como tools/capture.py.
+ *
+ * @param       Entrada: argc, argv - entrada.csv y salida_base.
+ *              Salida:  retorno (int) - 0 = bien; 1 = error de archivo o
+ *                       columnas; 2 = uso.
+ *              Salida:  <salida_base>.csv, <salida_base>_results.csv -
+ *                       resultados.
+ *
+ * @peripherals Ninguno (programa de PC: solo lee y escribe archivos).
+ *******************************************************************************/
 int main(int argc, char **argv) {
   if (argc != 3) {
     fprintf(stderr, "uso: %s entrada.csv salida_base\n", argv[0]);

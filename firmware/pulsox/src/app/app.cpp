@@ -27,6 +27,17 @@
 
 enum class State : uint8_t { CONNECTING, WAIT_FINGER, MEASURING, CLOSING, RESULT, ERROR_SCREEN };
 
+/*******************************************************************************
+ * @brief       Devuelve el nombre en texto de un estado de la aplicación.
+ *
+ * @details     Para los logs: CONECTANDO, ESPERA_DEDO, MIDIENDO, CERRANDO,
+ *              RESULTADO; cualquier otro da ERROR.
+ *
+ * @param       Entrada: s - estado.
+ *              Salida:  retorno (const char *) - nombre del estado.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static const char *stateName(State s) {
   switch (s) {
     case State::CONNECTING: return "CONECTANDO";
@@ -77,16 +88,49 @@ static float decimSum = 0.0f;
 static uint8_t decimN = 0;
 static uint32_t measStartMs = 0;
 
+/*******************************************************************************
+ * @brief       Cambia de estado y anota cuándo ocurrió.
+ *
+ * @details     Loguea la transición si el estado es otro y guarda millis() en
+ *              stateSince, la base de los timeouts de cada estado.
+ *
+ * @param       Entrada: s - nuevo estado.
+ *              Salida:  state, stateSince - estado vigente y su instante de
+ *                       entrada.
+ *
+ * @peripherals Internos: Serial/USB-CDC (log). Externos: Ninguno.
+ *******************************************************************************/
 static void setState(State s) {
   if (s != state) DBG("APP", "%s -> %s", stateName(state), stateName(s));
   state = s;
   stateSince = millis();
 }
 
+/*******************************************************************************
+ * @brief       Redondea un float al entero más cercano (valores no negativos).
+ *
+ * @details     Calcula (int)(v + 0.5f).
+ *
+ * @param       Entrada: v - valor a redondear.
+ *              Salida:  retorno (int) - valor redondeado.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static int roundi(float v) { return (int)(v + 0.5f); }
 
 // ---- I2C and the sensor --------------------------------------------------------------------------
 
+/*******************************************************************************
+ * @brief       Inicia el bus I2C del sensor si todavía no está iniciado.
+ *
+ * @details     Wire.begin con PIN_SDA_OX y PIN_SCL_OX y reloj I2C_CLOCK_HZ;
+ *              wireUp evita repetirlo.
+ *
+ * @param       Entrada: wireUp - si el bus ya está iniciado.
+ *              Salida:  wireUp - pasa a true.
+ *
+ * @peripherals Internos: I2C (Wire). Externos: MAX30102 (su bus).
+ *******************************************************************************/
 static void ensureWire() {
   if (wireUp) return;
   Wire.begin(PIN_SDA_OX, PIN_SCL_OX);
@@ -94,12 +138,41 @@ static void ensureWire() {
   wireUp = true;
 }
 
+/*******************************************************************************
+ * @brief       Libera el bus I2C (Wire.end), por ejemplo antes de dormir.
+ *
+ * @details     Si el bus estaba iniciado lo apaga y limpia wireUp.
+ *
+ * @param       Entrada: wireUp - si el bus está iniciado.
+ *              Salida:  wireUp - pasa a false.
+ *
+ * @peripherals Internos: I2C (Wire). Externos: Ninguno.
+ *******************************************************************************/
 static void releaseWire() {
   if (!wireUp) return;
   Wire.end();
   wireUp = false;
 }
 
+/*******************************************************************************
+ * @brief       Arranca el MAX30102 y deja listo el procesamiento para medir.
+ *
+ * @details     Inicia el bus y hace begin() y configure() del sensor. Si falla
+ *              lo loguea y corre i2cDiagnose() una sola vez por racha de
+ *              fallos. Si sale bien pone a cero los contadores y reinicia el
+ *              procesador PPG.
+ *
+ * @param       Entrada: SENSOR_CFG - configuración del sensor (FIFO, SPO2,
+ *                       corriente de LED).
+ *              Salida:  retorno (bool) - true si el sensor quedó muestreando.
+ *              Salida:  i2cFails, sampleIndex, samplesInWindow, statsAt -
+ *                       contadores reiniciados.
+ *              Salida:  lastOverflow, lastCorrupt, fingerPresent - puestos a
+ *                       cero / false.
+ *              Salida:  ppg - procesador PPG reiniciado.
+ *
+ * @peripherals Internos: I2C (Wire), Serial/USB-CDC (log). Externos: MAX30102.
+ *******************************************************************************/
 static bool startSensor() {
   static bool diagnosed = false;  // run the I2C diagnosis once per failure streak, not on every retry
   ensureWire();
@@ -131,9 +204,19 @@ static bool startSensor() {
   return true;
 }
 
-// The sensor is powered from the PCB's 3V3 rail, not by the ESP32: it keeps its state across
-// an ESP32 reset, so it is always sent to shutdown explicitly. begin() soft-resets it first
-// (also what makes shutdown() usable: it gives the driver the bus).
+/*******************************************************************************
+ * @brief       Manda el MAX30102 a shutdown y verifica que quedó apagado.
+ *
+ * @details     El sensor se alimenta del 3V3 de la placa, no del ESP32:
+ *              conserva su estado tras un reset, por eso siempre se lo apaga
+ *              explícitamente. begin() lo reinicia antes (le da el bus al
+ *              driver) y shutdown() se reintenta hasta 3 veces.
+ *
+ * @param       Salida:  retorno (bool) - true si quedó en shutdown.
+ *              Salida:  streaming - pasa a false.
+ *
+ * @peripherals Internos: I2C (Wire). Externos: MAX30102.
+ *******************************************************************************/
 static bool shutdownSensor() {
   ensureWire();
   streaming = false;
@@ -147,9 +230,22 @@ static bool shutdownSensor() {
 
 // ---- What the screen shows while measuring -----------------------------------------------------------
 
-// Every sample, right after ppg_push(). The screen follows the finger sample by sample (the
-// pipeline only refreshes its result once per second) and draws the trace of the IR through
-// the display filter (ir_view), which has the heartbeat pointing up.
+/*******************************************************************************
+ * @brief       Alimenta la pantalla con cada muestra mientras se mide.
+ *
+ * @details     La pantalla sigue al dedo muestra a muestra (el pipeline
+ *              refresca su resultado una vez por segundo): alterna entre
+ *              «midiendo» y «sin dedo» y dibuja la traza del IR filtrado para
+ *              pantalla (ir_view), con el latido hacia arriba.
+ *
+ * @param       Entrada: d - valores intermedios de la última muestra (finger,
+ *                       ir_view).
+ *              Salida:  fingerShown - lo que dice la pantalla: midiendo o sin
+ *                       dedo.
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en displayUpdate()).
+ *******************************************************************************/
 static void feedDisplay(const PpgDebug &d) {
   if (d.finger != fingerShown) {
     fingerShown = d.finger;
@@ -162,12 +258,36 @@ static void feedDisplay(const PpgDebug &d) {
   if (fingerShown) displayPushPpg(d.ir_view);
 }
 
-// Once per second, with the pipeline result. Invalid values show as "--".
+/*******************************************************************************
+ * @brief       Muestra en pantalla el resultado de cada segundo del pipeline.
+ *
+ * @details     Lo ignora si la pantalla ya dice «sin dedo» (podría ser del dedo
+ *              recién retirado). Un valor no válido se pasa como 0 y la
+ *              pantalla lo dibuja como "--".
+ *
+ * @param       Entrada: o - salida del procesador PPG.
+ *              Entrada: fingerShown - si la pantalla está en «midiendo».
+ *              Salida:  pantalla - SpO2 y BPM redondeados (0 = no válido).
+ *
+ * @peripherals Internos: Ninguno.
+ *              Externos: pantalla TFT (se escribe luego en displayUpdate()).
+ *******************************************************************************/
 static void showResult(const PpgOutput &o) {
   if (!fingerShown) return;  // the result may still describe the finger that was just removed
   displaySetMeasuring(o.spo2_valid ? roundi(o.spo2) : 0, o.bpm_valid ? roundi(o.bpm) : 0);
 }
 
+/*******************************************************************************
+ * @brief       Actualiza la pantalla y mide cuánto tardó.
+ *
+ * @details     Llama a displayUpdate() y guarda en displayWorstUs la mayor
+ *              duración desde la última línea LIVE.
+ *
+ * @param       Salida:  displayWorstUs - peor tiempo de displayUpdate(), en
+ *                       microsegundos.
+ *
+ * @peripherals Internos: SPI (vía displayUpdate()). Externos: pantalla TFT.
+ *******************************************************************************/
 static void updateDisplay() {
   uint32_t t0 = micros();
   displayUpdate();
@@ -175,7 +295,20 @@ static void updateDisplay() {
   if (dt > displayWorstUs) displayWorstUs = dt;
 }
 
-// Every sample: the cloud gets the same trace the screen draws (ir_view), at CLOUD_PPG_FS.
+/*******************************************************************************
+ * @brief       Junta la traza del pulso para la nube, decimada a CLOUD_PPG_FS
+ *              muestras/s.
+ *
+ * @details     Cada muestra con dedo suma ir_view (la misma traza que dibuja la
+ *              pantalla); cada PPG_FS / CLOUD_PPG_FS muestras guarda el
+ *              promedio, saturado a int16, en tickPpg[].
+ *
+ * @param       Entrada: d - finger e ir_view de la muestra.
+ *              Salida:  tickPpg[], tickPpgN - un segundo de traza decimada.
+ *              Salida:  decimSum, decimN - acumulador de la decimación.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static void collectPpg(const PpgDebug &d) {
   if (!d.finger) return;
   decimSum += d.ir_view;
@@ -188,7 +321,17 @@ static void collectPpg(const PpgDebug &d) {
   if (tickPpgN < CLOUD_PPG_FS) tickPpg[tickPpgN++] = (int16_t)v;
 }
 
-// The once-per-second result of the pipeline, as a log line.
+/*******************************************************************************
+ * @brief       Imprime el resultado de cada segundo como línea de log.
+ *
+ * @details     Sin dedo imprime «sin dedo»; si no, SpO2 y BPM ("--" si no son
+ *              válidos), R, índice de perfusión, calidad y SATURADO si
+ *              corresponde.
+ *
+ * @param       Entrada: o - salida del procesador PPG.
+ *
+ * @peripherals Internos: Serial/USB-CDC. Externos: Ninguno.
+ *******************************************************************************/
 static void printResult(const PpgOutput &o) {
   if (!o.finger) {
     DBG("PPG", "sin dedo");
@@ -203,6 +346,24 @@ static void printResult(const PpgOutput &o) {
 
 // ---- The measurement ------------------------------------------------------------------------------------
 
+/*******************************************************************************
+ * @brief       Empieza una medición: reinicia el juez y abre la sesión en la
+ *              nube.
+ *
+ * @details     Reinicia la sesión, el decimado de la traza y la pantalla de
+ *              medición. Si la nube está lista (LinkState::READY) pide abrir la
+ *              sesión; si no, mide igual sin enviar. Pasa a MEASURING.
+ *
+ * @param       Entrada: cloudLinkState() - si hay nube lista para enviar.
+ *              Salida:  session, measStartMs - sesión nueva y su instante de
+ *                       inicio.
+ *              Salida:  tickPpgN, decimSum, decimN, fingerShown - reiniciados.
+ *              Salida:  state - MEASURING.
+ *
+ * @peripherals Internos: Serial/USB-CDC (log), bloque WiFi (vía la tarea de la
+ *              nube).
+ *              Externos: pantalla TFT, nube (Firebase).
+ *******************************************************************************/
 static void startMeasurement() {
   const bool toCloud = cloudLinkState() == LinkState::READY;
   ppg_session_init(&session);
@@ -218,7 +379,23 @@ static void startMeasurement() {
   setState(State::MEASURING);
 }
 
-// The judge says it is over and good: the session is closed in the cloud and the sensor rests.
+/*******************************************************************************
+ * @brief       Cierra una medición buena: cierra la sesión en la nube y apaga
+ *              el sensor.
+ *
+ * @details     Loguea el resultado y, si la sesión está abierta, pide a la nube
+ *              cerrarla con SpO2, BPM y calidad. Manda el sensor a shutdown y
+ *              pasa a CLOSING para esperar a la nube.
+ *
+ * @param       Entrada: session - resultado (spo2, bpm, quality, seconds,
+ *                       valid_seconds).
+ *              Salida:  closingToResult - true: termina en RESULT.
+ *              Salida:  state - CLOSING.
+ *
+ * @peripherals Internos: I2C (Wire), Serial/USB-CDC, bloque WiFi (vía la tarea
+ *              de la nube).
+ *              Externos: MAX30102, nube (Firebase).
+ *******************************************************************************/
 static void finishMeasurement() {
   DBG("MEAS", "TERMINADA a los %u s (%u validos): SpO2=%.0f BPM=%.0f calidad=%.2f", session.seconds,
       session.valid_seconds, (double)session.spo2, (double)session.bpm, (double)session.quality);
@@ -228,7 +405,23 @@ static void finishMeasurement() {
   setState(State::CLOSING);
 }
 
-// Invalid (finger away, erratic signal...): the session is deleted from the cloud, "no finger".
+/*******************************************************************************
+ * @brief       Descarta una medición inválida: borra la sesión de la nube y
+ *              apaga el sensor.
+ *
+ * @details     Loguea el motivo, muestra «sin dedo», pide a la nube borrar la
+ *              sesión si estaba abierta, manda el sensor a shutdown y pasa a
+ *              CLOSING con destino ERROR_SCREEN.
+ *
+ * @param       Entrada: why - motivo del descarte, para el log.
+ *              Salida:  fingerShown - false.
+ *              Salida:  closingToResult - false: termina en ERROR_SCREEN.
+ *              Salida:  state - CLOSING.
+ *
+ * @peripherals Internos: I2C (Wire), Serial/USB-CDC, bloque WiFi (vía la tarea
+ *              de la nube).
+ *              Externos: MAX30102, pantalla TFT, nube (Firebase).
+ *******************************************************************************/
 static void discardMeasurement(const char *why) {
   DBG("MEAS", "DESCARTADA a los %u s: %s", session.seconds, why);
   fingerShown = false;
@@ -239,7 +432,25 @@ static void discardMeasurement(const char *why) {
   setState(State::CLOSING);
 }
 
-// Once per second while measuring: the tick for the cloud, the progress bar, the verdict.
+/*******************************************************************************
+ * @brief       Procesa cada segundo de la medición: tick a la nube, progreso y
+ *              veredicto.
+ *
+ * @details     Pasa la salida al juez (ppg_session_push), actualiza la barra de
+ *              progreso y, si sigue midiendo con la sesión abierta, arma y
+ *              encola el tick `live` con la traza del segundo. Si el juez dice
+ *              DONE o ABORTED, termina o descarta la medición.
+ *
+ * @param       Entrada: o - salida del procesador PPG del último segundo.
+ *              Entrada: session, tickPpg[], measStartMs - juez, traza del
+ *                       segundo e inicio.
+ *              Salida:  tickPpgN - vuelve a 0: el segundo ya se entregó.
+ *              Salida:  state - CLOSING si la medición terminó o se descartó.
+ *
+ * @peripherals Internos: I2C (Wire), Serial/USB-CDC, bloque WiFi (vía la tarea
+ *              de la nube).
+ *              Externos: MAX30102, pantalla TFT, nube (Firebase).
+ *******************************************************************************/
 static void onSecond(const PpgOutput &o) {
   const PpgSessionState verdict = ppg_session_push(&session, &o);
   displaySetProgress(ppg_session_progress(&session));
@@ -266,6 +477,30 @@ static void onSecond(const PpgOutput &o) {
   }
 }
 
+/*******************************************************************************
+ * @brief       Lee el FIFO del sensor y pasa cada muestra por el pipeline.
+ *
+ * @details     Lee hasta 32 muestras con readFifo(). Cuenta los fallos I2C
+ *              seguidos y registra desbordes y muestras corruptas. Cada muestra
+ *              va a ppg_push() y al stream; al medir alimenta pantalla y nube,
+ *              y cada segundo llama a onSecond().
+ *
+ * @param       Entrada: state - qué hacer con cada muestra (WAIT_FINGER o
+ *                       MEASURING).
+ *              Entrada: streamTakeGlitchRequest() - (solo PULSOX_TEST_HOOKS)
+ *                       corromper la próxima.
+ *              Salida:  i2cFails - fallos de lectura seguidos (0 si salió
+ *                       bien).
+ *              Salida:  fingerPresent, lastSample, sampleIndex, samplesInWindow
+ *                       - última muestra.
+ *              Salida:  livePiIr/Red, liveAcIr/Red - PI y AC del último
+ *                       segundo, para la línea LIVE.
+ *              Salida:  lastOverflow, lastCorrupt - contadores ya informados.
+ *
+ * @peripherals Internos: I2C (Wire), Serial/USB-CDC, bloque WiFi (vía
+ *              onSecond() y la tarea de la nube).
+ *              Externos: MAX30102, pantalla TFT, nube (Firebase).
+ *******************************************************************************/
 static void pollSensor() {
   PpgSample buf[32];
 #ifdef PULSOX_TEST_HOOKS
@@ -324,6 +559,20 @@ static void pollSensor() {
   samplesInWindow += n;
 }
 
+/*******************************************************************************
+ * @brief       Imprime la línea LIVE, una vez por STATS_PERIOD_MS, con la salud
+ *              del sensor.
+ *
+ * @details     Muestras por segundo, últimos RED e IR, PI y AC de cada canal,
+ *              desbordes, muestras corruptas, fallos I2C y peor tiempo de
+ *              pantalla. Luego pone a cero samplesInWindow y displayWorstUs.
+ *
+ * @param       Entrada: statsAt - instante del último resumen.
+ *              Salida:  statsAt - avanza un período.
+ *              Salida:  samplesInWindow, displayWorstUs - vuelven a 0.
+ *
+ * @peripherals Internos: Serial/USB-CDC. Externos: Ninguno.
+ *******************************************************************************/
 static void printStats() {
   if (millis() - statsAt < STATS_PERIOD_MS) return;
   statsAt += STATS_PERIOD_MS;
@@ -338,7 +587,17 @@ static void printStats() {
 
 // ---- Sleep and the flow ----------------------------------------------------------------------------------
 
-// Waits (keeping the screen alive) until the cloud has finished what it was told to do.
+/*******************************************************************************
+ * @brief       Espera a que la nube termine lo que se le pidió, con la pantalla
+ *              viva.
+ *
+ * @details     Mientras cloudLinkBusy() y no pase el timeout, llama a
+ *              updateDisplay() y espera 10 ms.
+ *
+ * @param       Entrada: timeoutMs - espera máxima, en milisegundos.
+ *
+ * @peripherals Internos: SPI (vía displayUpdate()). Externos: pantalla TFT.
+ *******************************************************************************/
 static void waitCloud(uint32_t timeoutMs) {
   const uint32_t t0 = millis();
   while (cloudLinkBusy() && millis() - t0 < timeoutMs) {
@@ -347,8 +606,22 @@ static void waitCloud(uint32_t timeoutMs) {
   }
 }
 
-// From the button (or the first boot): everything starts from the "connecting" screen. The
-// sensor is not started yet: it only matters once the cloud is settled.
+/*******************************************************************************
+ * @brief       Arranca el flujo (botón o primer arranque): pantalla
+ *              «Conectando» y nube.
+ *
+ * @details     Anota awakeSince, muestra la barra de estado y la pantalla de
+ *              conexión, pide a la nube conectarse en segundo plano y pasa a
+ *              CONNECTING. El sensor no arranca todavía: solo importa con la
+ *              nube resuelta.
+ *
+ * @param       Salida:  awakeSince, fingerShown - instante del despertar y
+ *                       false.
+ *              Salida:  state - CONNECTING.
+ *
+ * @peripherals Internos: bloque WiFi (vía la tarea de la nube).
+ *              Externos: pantalla TFT, nube (Firebase).
+ *******************************************************************************/
 static void beginFlow() {
   awakeSince = millis();
   fingerShown = false;
@@ -358,8 +631,20 @@ static void beginFlow() {
   setState(State::CONNECTING);
 }
 
-// Everything quiet, then sleep. With deep sleep it does not return; with light sleep and in the
-// simulated one (env dev) it returns when the button is pressed.
+/*******************************************************************************
+ * @brief       Deja todo quieto y duerme.
+ *
+ * @details     Loguea, manda el sensor a shutdown (avisa si falla), libera el
+ *              I2C, duerme la pantalla y llama a powerSleep(). Con deep sleep
+ *              no vuelve; con light sleep y con el sueño simulado (env dev)
+ *              vuelve al apretar el botón.
+ *
+ * @param       Entrada: awakeSince - para informar cuánto estuvo despierto.
+ *
+ * @peripherals Internos: I2C (Wire), SPI, GPIO, light/deep sleep,
+ *              Serial/USB-CDC.
+ *              Externos: MAX30102, pantalla TFT, botón, LED de estado.
+ *******************************************************************************/
 static void enterSleep() {
   DBG("PWR", "a dormir tras %lu s despierto", (unsigned long)((millis() - awakeSince) / 1000));
   if (shutdownSensor()) {
@@ -373,14 +658,40 @@ static void enterSleep() {
   powerSleep();
 }
 
-// Back from the sleep (light, or the simulated one of env dev); with deep sleep, setup() runs this
-// after the reboot.
+/*******************************************************************************
+ * @brief       Retoma el flujo al despertar del sueño.
+ *
+ * @details     Vuelve a empezar desde CONNECTING (beginFlow) y despierta la
+ *              pantalla (displayWake). Lo llama goToSleep() al volver de light
+ *              sleep o del sueño simulado, y appSetup() al arrancar (también
+ *              tras un deep sleep).
+ *
+ * @param       Salida:  state - CONNECTING.
+ *
+ * @peripherals Internos: SPI, GPIO (backlight), Serial/USB-CDC, bloque WiFi
+ *              (vía la tarea de la nube).
+ *              Externos: pantalla TFT, nube (Firebase).
+ *******************************************************************************/
 static void wakeUp() {
   beginFlow();
   displayWake();
   DBG("WAKE", "despierto");
 }
 
+/*******************************************************************************
+ * @brief       Cierra la conexión a la nube, duerme y retoma al despertar.
+ *
+ * @details     Loguea el motivo, desconecta la nube, espera hasta
+ *              CLOUD_CLOSE_TIMEOUT_MS a que termine, duerme con enterSleep() y
+ *              al volver reinicia el flujo con wakeUp().
+ *
+ * @param       Entrada: why - motivo de dormir, para el log.
+ *
+ * @peripherals Internos: I2C (Wire), SPI, GPIO, light/deep sleep,
+ *              Serial/USB-CDC, bloque WiFi (vía la tarea de la nube).
+ *              Externos: MAX30102, pantalla TFT, botón, LED de estado, nube
+ *              (Firebase).
+ *******************************************************************************/
 static void goToSleep(const char *why) {
   DBG("APP", "a dormir: %s", why);
   cloudLinkDisconnect();
@@ -389,8 +700,19 @@ static void goToSleep(const char *why) {
   wakeUp();
 }
 
-// Waits out BOOT_WINDOW_MS after a cold boot (time to flash or open the monitor), on a black screen.
-// True if the button was pressed meanwhile.
+/*******************************************************************************
+ * @brief       Espera BOOT_WINDOW_MS tras un arranque en frío, con la pantalla
+ *              en negro.
+ *
+ * @details     Es el margen para flashear o abrir el monitor antes de dormir.
+ *              Mientras espera hace parpadear el LED de estado, atiende
+ *              comandos seriales y mira el botón.
+ *
+ * @param       Salida:  retorno (bool) - true si se apretó el botón durante la
+ *                       espera.
+ *
+ * @peripherals Internos: GPIO, Serial/USB-CDC. Externos: botón, LED de estado.
+ *******************************************************************************/
 static bool bootWindow() {
   DBG("BOOT", "arranque en frio: %d ms para flashear o abrir el monitor; el boton inicia", BOOT_WINDOW_MS);
   while (millis() < BOOT_WINDOW_MS) {
@@ -404,6 +726,20 @@ static bool bootWindow() {
 
 // ---- The state machine ------------------------------------------------------------------------------------
 
+/*******************************************************************************
+ * @brief       Atiende una pulsación del botón según el estado.
+ *
+ * @details     En RESULT o ERROR_SCREEN empieza una medición nueva (beginFlow);
+ *              en cualquier otro estado la ignora, porque hay una medición en
+ *              curso.
+ *
+ * @param       Entrada: state - estado de la aplicación.
+ *              Salida:  buttonPresses - cuenta una pulsación más.
+ *
+ * @peripherals Internos: Serial/USB-CDC, bloque WiFi (vía la tarea de la nube)
+ *              (vía beginFlow()).
+ *              Externos: botón (su pulsación), pantalla TFT, nube (Firebase).
+ *******************************************************************************/
 static void onButton() {
   buttonPresses++;
   if (state == State::RESULT || state == State::ERROR_SCREEN) {
@@ -414,6 +750,25 @@ static void onButton() {
   }
 }
 
+/*******************************************************************************
+ * @brief       Avanza la máquina de estados de la aplicación.
+ *
+ * @details     CONNECTING pasa a WAIT_FINGER con la nube lista, sin nube o a
+ *              CONNECT_MAX_MS, y arranca el sensor. WAIT_FINGER mide con dedo o
+ *              duerme tras FINGER_WAIT_S. CLOSING espera a la nube y pasa a
+ *              RESULT o ERROR_SCREEN, que duermen luego.
+ *
+ * @param       Entrada: state, stateSince - estado vigente y desde cuándo.
+ *              Entrada: cloudLinkState(), fingerPresent, closingToResult,
+ *                       session - datos que deciden la transición.
+ *              Salida:  state - nuevo estado.
+ *              Salida:  streaming - true si el sensor arrancó.
+ *
+ * @peripherals Internos: I2C (Wire), SPI, GPIO, light/deep sleep,
+ *              Serial/USB-CDC, bloque WiFi (vía la tarea de la nube).
+ *              Externos: MAX30102, pantalla TFT, botón, LED de estado, nube
+ *              (Firebase).
+ *******************************************************************************/
 static void updateState() {
   const uint32_t now = millis();
   switch (state) {
@@ -459,6 +814,24 @@ static void updateState() {
   }
 }
 
+/*******************************************************************************
+ * @brief       Arranque del firmware: inicia los módulos y decide si duerme o
+ *              empieza a medir.
+ *
+ * @details     Libera los pines de un deep sleep, inicia LED, Serial, pantalla,
+ *              botón e I2C y crea la tarea de la nube (de menor prioridad que
+ *              el loop). Si despertó por el temporizador o fue un arranque en
+ *              frío sin botón, duerme; si no, sigue con wakeUp().
+ *
+ * @param       Entrada: powerWakeReason() - por qué arrancó el chip.
+ *              Salida:  Serial, pantalla, botón, I2C - iniciados.
+ *
+ * @peripherals Internos: GPIO, I2C (Wire), SPI, Serial/USB-CDC, tareas
+ *              FreeRTOS, bloque WiFi (vía la tarea de la nube), light/deep
+ *              sleep.
+ *              Externos: MAX30102, pantalla TFT, botón, LED de estado, nube
+ *              (Firebase).
+ *******************************************************************************/
 void appSetup() {
   powerBegin();  // first: release the pins a deep sleep froze
   const Wake wake = powerWakeReason();
@@ -501,6 +874,25 @@ void appSetup() {
   wakeUp();
 }
 
+/*******************************************************************************
+ * @brief       Una vuelta del loop: atiende botón, LED, comandos, pantalla,
+ *              estado y sensor.
+ *
+ * @details     Solo en WAIT_FINGER y MEASURING lee el sensor (pollSensor):
+ *              reintenta arrancarlo si no responde y lo da por perdido tras
+ *              I2C_FAILS_BEFORE_LOST fallos. Siempre termina en un delay: la
+ *              tarea de la nube corre con el tiempo que deja libre.
+ *
+ * @param       Entrada: state, streaming, i2cFails - estado de la app y salud
+ *                       del sensor.
+ *              Salida:  streaming - false si el sensor dejó de responder.
+ *              Salida:  state - puede cambiar (máquina de estados).
+ *
+ * @peripherals Internos: GPIO, I2C (Wire), SPI, Serial/USB-CDC, bloque WiFi
+ *              (vía la tarea de la nube), light/deep sleep.
+ *              Externos: MAX30102, pantalla TFT, botón, LED de estado, nube
+ *              (Firebase).
+ *******************************************************************************/
 void appLoop() {
   if (buttonPressed()) onButton();
 

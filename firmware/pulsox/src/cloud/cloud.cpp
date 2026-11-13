@@ -35,13 +35,42 @@ static_assert(NETWORK_COUNT >= 1, "secrets.h: at least one WiFi network");
 // status of WiFi.status() cannot be used for that: it still holds the one of the previous attempt right
 // after WiFi.begin().
 static volatile bool noApFound = false;
+
+/*******************************************************************************
+ * @brief       Detecta que el chip no encontró la red WiFi que buscaba.
+ *
+ * @details     Callback del evento «estación desconectada»: si el motivo es
+ *              NO_AP_FOUND levanta noApFound. No sirve WiFi.status() para esto:
+ *              justo después de WiFi.begin() todavía conserva el del intento
+ *              anterior.
+ *
+ * @param       Entrada: info - datos del evento (motivo de la desconexión).
+ *              Salida:  noApFound - true si el SSID no se encontró.
+ *
+ * @peripherals Internos: bloque WiFi (evento STA desconectada).
+ *              Externos: punto de acceso WiFi.
+ *******************************************************************************/
 static void onWifiEvent(arduino_event_id_t, arduino_event_info_t info) {
   if (info.wifi_sta_disconnected.reason == WIFI_REASON_NO_AP_FOUND) noApFound = true;
 }
 
-// Tries to join network `index` for up to timeoutMs. The SSIDs are never logged: only the position in the
-// list. With several networks, one the chip cannot find is dropped at once (~2-3 s, what its search of the
-// name takes) instead of waiting out the whole timeout.
+/*******************************************************************************
+ * @brief       Intenta conectarse a una red de la lista, hasta un tiempo
+ *              máximo.
+ *
+ * @details     Desconecta, hace WiFi.begin() con esa red y espera la conexión
+ *              cada 100 ms. Con varias redes, si el chip avisa que no la
+ *              encuentra (~2-3 s) la abandona enseguida en vez de esperar todo
+ *              el timeout. Nunca loguea el SSID, solo su posición.
+ *
+ * @param       Entrada: index - posición de la red en NETWORKS.
+ *              Entrada: timeoutMs - espera máxima por esta red, en ms.
+ *              Salida:  retorno (bool) - true si quedó conectado.
+ *              Salida:  noApFound - se borra antes de cada intento.
+ *
+ * @peripherals Internos: bloque WiFi (STA), Serial/USB-CDC (log).
+ *              Externos: punto de acceso WiFi.
+ *******************************************************************************/
 static bool joinNetwork(int index, uint32_t timeoutMs) {
   static bool listening = false;
   if (!listening) {
@@ -70,8 +99,21 @@ static bool joinNetwork(int index, uint32_t timeoutMs) {
   return false;
 }
 
-// timeoutMs is per network. The known networks are tried in order of preference, within WIFI_MAX_TOTAL_MS,
-// each one directly (no scan of its own, so a hidden SSID works too): the first that connects wins.
+/*******************************************************************************
+ * @brief       Conecta el WiFi probando las redes conocidas por orden de
+ *              preferencia.
+ *
+ * @details     Modo estación, sin guardar las credenciales en flash y con
+ *              reconexión automática. Prueba cada red de NETWORKS directamente
+ *              (sin escaneo: sirve con SSID oculto) dentro de WIFI_MAX_TOTAL_MS
+ *              y se queda con la primera que conecta.
+ *
+ * @param       Entrada: timeoutMs - espera máxima por red, en ms.
+ *              Salida:  retorno (bool) - true si alguna red conectó.
+ *
+ * @peripherals Internos: bloque WiFi (STA), Serial/USB-CDC (log).
+ *              Externos: punto de acceso WiFi.
+ *******************************************************************************/
 bool wifiConnect(uint32_t timeoutMs) {
   WiFi.persistent(false);  // no flash write of the credentials on every boot
   WiFi.mode(WIFI_STA);
@@ -84,6 +126,18 @@ bool wifiConnect(uint32_t timeoutMs) {
   return false;
 }
 
+/*******************************************************************************
+ * @brief       Escapa un texto para ponerlo entre comillas dentro de un JSON.
+ *
+ * @details     Convierte comillas, barra invertida, \n, \r y \t en su secuencia
+ *              con barra, y los demás caracteres de control (menores que 0x20)
+ *              en \u00XX.
+ *
+ * @param       Entrada: s - texto original.
+ *              Salida:  retorno (String) - texto escapado.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 String jsonEscape(const char* s) {
   String out;
   out.reserve(strlen(s) + 8);
@@ -108,10 +162,33 @@ String jsonEscape(const char* s) {
   return out;
 }
 
+/*******************************************************************************
+ * @brief       Dice si un carácter es un espacio en blanco de JSON.
+ *
+ * @details     Espacio, salto de línea, retorno de carro o tabulación.
+ *
+ * @param       Entrada: c - carácter.
+ *              Salida:  retorno (bool) - true si es espacio en blanco.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static bool isJsonSpace(char c) { return c == ' ' || c == '\n' || c == '\r' || c == '\t'; }
 
-// Value of the first `"key": "<string>"` in body. Enough for the few fields we read
-// (idToken, name, error.message); skips occurrences that are not a key with a string value.
+/*******************************************************************************
+ * @brief       Extrae el valor de texto de la primera clave "key": "..." de un
+ *              JSON.
+ *
+ * @details     Busca "key" seguida de ':' y de una cadena, saltando las
+ *              apariciones que no son una clave con valor de texto. Alcanza
+ *              para los pocos campos que se leen (idToken, name,
+ *              error.message); resuelve las secuencias con barra.
+ *
+ * @param       Entrada: body - JSON recibido.
+ *              Entrada: key - nombre de la clave.
+ *              Salida:  retorno (String) - valor, o "" si no está.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 String jsonField(const String& body, const char* key) {
   String pat = String("\"") + key + "\"";
   const int len = body.length();
@@ -148,6 +225,16 @@ String jsonField(const String& body, const char* key) {
   }
 }
 
+/*******************************************************************************
+ * @brief       Codifica un texto en porcentaje para un formulario o una URL.
+ *
+ * @details     Deja pasar letras, dígitos y -_.~ y convierte el resto en %XX.
+ *
+ * @param       Entrada: s - texto original.
+ *              Salida:  retorno (String) - texto codificado.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static String urlEncode(const String& s) {
   String out;
   out.reserve(s.length() + 8);
@@ -164,7 +251,18 @@ static String urlEncode(const String& s) {
   return out;
 }
 
-// Firebase puts the reason in `error` (RTDB: "Permission denied") or `error.message` (Auth).
+/*******************************************************************************
+ * @brief       Saca el motivo de un error de una respuesta de Firebase.
+ *
+ * @details     Firebase lo pone en `error` (RTDB: "Permission denied") o en
+ *              `error.message` (Auth): prueba esas claves y, si no hay ninguna,
+ *              devuelve los primeros 60 caracteres del cuerpo.
+ *
+ * @param       Entrada: body - cuerpo de la respuesta HTTP.
+ *              Salida:  retorno (String) - texto del error.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 static String errorText(const String& body) {
   String e = jsonField(body, "error");
   if (e.length() == 0) e = jsonField(body, "message");
@@ -174,12 +272,43 @@ static String errorText(const String& body) {
 
 // ----------------------------------------------------------------- CloudDb
 
+/*******************************************************************************
+ * @brief       Crea el cliente de la base: guarda el host y la raíz del
+ *              dispositivo.
+ *
+ * @details     La raíz de todas las rutas es /devices/<deviceId>/. El cliente
+ *              TLS de la base queda con los certificados raíz (ROOT_CA_PEM)
+ *              para validar al servidor; todavía no se conecta.
+ *
+ * @param       Entrada: dbHost - host de la base, sin esquema.
+ *              Entrada: deviceId - identificador del dispositivo.
+ *              Salida:  dbHost_, root_, dbClient_ - inicializados.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 CloudDb::CloudDb(const char* dbHost, const char* deviceId) : dbHost_(dbHost) {
   root_ = String("/devices/") + deviceId + "/";
   dbClient_.setCACert(ROOT_CA_PEM);
 }
 
-// One short-lived HTTPS request to an auth host (not the DB connection).
+/*******************************************************************************
+ * @brief       Hace un pedido HTTPS corto y aparte a un servidor de
+ *              autenticación.
+ *
+ * @details     Usa un cliente TLS propio (otro host y otra cadena de
+ *              certificados que la base) con timeout AUTH_TIMEOUT_MS y hace un
+ *              POST. El HTTPClient se declara después del cliente porque su
+ *              destructor lo detiene.
+ *
+ * @param       Entrada: host, uri - servidor y ruta del pedido.
+ *              Entrada: body, contentType - cuerpo del POST y su tipo.
+ *              Salida:  code - código HTTP, o error de transporte (< 0).
+ *              Salida:  resp - cuerpo de la respuesta (si hubo).
+ *              Salida:  retorno (bool) - true si hubo respuesta HTTP.
+ *
+ * @peripherals Internos: bloque WiFi (cliente TLS).
+ *              Externos: servidor de autenticación de Firebase.
+ *******************************************************************************/
 bool CloudDb::authCall(const char* host, const String& uri, const String& body, const char* contentType,
                        int* code, String* resp) {
   WiFiClientSecure client;
@@ -195,6 +324,20 @@ bool CloudDb::authCall(const char* host, const String& uri, const String& body, 
   return *code > 0;
 }
 
+/*******************************************************************************
+ * @brief       Guarda el token de acceso y programa cuándo renovarlo.
+ *
+ * @details     Guarda idToken y refreshToken. Vigencia = expiresIn (3600 s si
+ *              no viene); se renueva con margen de la mitad o 300 s, lo que sea
+ *              menor. forcedRefreshS_ (para pruebas) reemplaza ese plazo.
+ *
+ * @param       Entrada: idToken, refreshToken, expiresIn - datos de la
+ *                       respuesta de login o refresh.
+ *              Salida:  idToken_, refreshToken_ - tokens guardados.
+ *              Salida:  refreshAtMs_ - instante (millis) en que toca renovar.
+ *
+ * @peripherals Internos: Serial/USB-CDC (log). Externos: Ninguno.
+ *******************************************************************************/
 void CloudDb::storeToken(const String& idToken, const String& refreshToken, const String& expiresIn) {
   idToken_ = idToken;
   refreshToken_ = refreshToken;
@@ -207,6 +350,25 @@ void CloudDb::storeToken(const String& idToken, const String& refreshToken, cons
       (unsigned long)waitS);
 }
 
+/*******************************************************************************
+ * @brief       Inicia sesión en Firebase con email y contraseña y obtiene el
+ *              token.
+ *
+ * @details     No lo intenta durante AUTH_BACKOFF_MS tras un login fallido.
+ *              Hace signInWithPassword por HTTPS, borra de memoria el cuerpo
+ *              con la contraseña y guarda uid y tokens; cada fallo anota
+ *              lastError_ y arma la espera.
+ *
+ * @param       Salida:  retorno (bool) - true si el login salió bien.
+ *              Salida:  uid_, idToken_, refreshToken_, refreshAtMs_ - sesión
+ *                       obtenida.
+ *              Salida:  lastError_, authBackoffUntilMs_ - motivo del fallo y
+ *                       fin de la espera.
+ *              Salida:  stats_.logins - suma un login exitoso.
+ *
+ * @peripherals Internos: bloque WiFi (TLS), Serial/USB-CDC (log).
+ *              Externos: servidor de autenticación de Firebase.
+ *******************************************************************************/
 bool CloudDb::login() {
   if (authBackoffUntilMs_ != 0 && (int32_t)(millis() - authBackoffUntilMs_) < 0) {
     lastError_ = "login en espera (backoff)";
@@ -248,6 +410,22 @@ bool CloudDb::login() {
   return true;
 }
 
+/*******************************************************************************
+ * @brief       Renueva el token de acceso con el refresh token.
+ *
+ * @details     Pide /v1/token (grant_type=refresh_token) al servidor de tokens;
+ *              si la respuesta trae id_token y refresh_token los guarda con
+ *              storeToken().
+ *
+ * @param       Entrada: refreshToken_ - token de renovación vigente.
+ *              Salida:  retorno (bool) - true si se renovó.
+ *              Salida:  idToken_, refreshToken_, refreshAtMs_ - tokens nuevos y
+ *                       próxima renovación.
+ *              Salida:  stats_.refreshes - suma una renovación exitosa.
+ *
+ * @peripherals Internos: bloque WiFi (TLS), Serial/USB-CDC (log).
+ *              Externos: servidor de tokens de Firebase.
+ *******************************************************************************/
 bool CloudDb::refresh() {
   String form = String("grant_type=refresh_token&refresh_token=") + urlEncode(refreshToken_);
   String uri = String("/v1/token?key=") + FIREBASE_API_KEY;
@@ -274,6 +452,23 @@ bool CloudDb::refresh() {
   return true;
 }
 
+/*******************************************************************************
+ * @brief       Asegura que haya un token vigente antes de cada pedido a la
+ *              base.
+ *
+ * @details     Sin token hace login(). Con el token vencido (refreshAtMs_)
+ *              prueba refresh() y, si falla, un login() nuevo. Si ninguno anda
+ *              sigue con el token actual y mira de nuevo en 10 s: una caída de
+ *              Firebase cuesta un intento cada 10 s, no uno por tick.
+ *
+ * @param       Entrada: idToken_, refreshAtMs_ - token vigente y cuándo vence.
+ *              Salida:  retorno (bool) - false solo si no hay token y el login
+ *                       falló.
+ *              Salida:  refreshAtMs_ - se posterga 10 s si falló la renovación.
+ *
+ * @peripherals Internos: bloque WiFi (TLS), Serial/USB-CDC (log).
+ *              Externos: servidor de autenticación de Firebase.
+ *******************************************************************************/
 bool CloudDb::ensureToken() {
   if (idToken_.length() == 0) return login();
   if ((int32_t)(millis() - refreshAtMs_) < 0) return true;
@@ -291,13 +486,57 @@ bool CloudDb::ensureToken() {
   return true;
 }
 
+/*******************************************************************************
+ * @brief       Fuerza la renovación del token en el próximo pedido.
+ *
+ * @details     Pone refreshAtMs_ en el instante actual (comando de prueba `r`).
+ *
+ * @param       Salida:  refreshAtMs_ - ahora.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 void CloudDb::expireToken() { refreshAtMs_ = millis(); }
 
+/*******************************************************************************
+ * @brief       Fija cada cuántos segundos renovar el token (para pruebas).
+ *
+ * @details     Guarda forcedRefreshS_ (0 = usar el vencimiento real, ~55 min)
+ *              y, si ya hay token y s no es 0, reprograma la renovación a s
+ *              segundos desde ahora.
+ *
+ * @param       Entrada: s - segundos entre renovaciones; 0 = vencimiento real.
+ *              Salida:  forcedRefreshS_, refreshAtMs_ - plazo forzado y próxima
+ *                       renovación.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 void CloudDb::setRefreshAfterS(uint32_t s) {
   forcedRefreshS_ = s;
   if (idToken_.length() != 0 && s != 0) refreshAtMs_ = millis() + s * 1000UL;
 }
 
+/*******************************************************************************
+ * @brief       Hace un pedido REST a la base, con token, reintentos y
+ *              estadísticas.
+ *
+ * @details     Asegura el token, arma la URL (ruta + .json + auth) y envía por
+ *              la conexión TLS persistente. Reintenta una vez tras un 401
+ *              (login nuevo) y una vez si el servidor cerró la conexión
+ *              inactiva; un timeout de lectura no (duplicaría un POST).
+ *
+ * @param       Entrada: method, path, json - verbo HTTP, ruta bajo
+ *                       devices/<id>/ y cuerpo (NULL = sin cuerpo).
+ *              Entrada: silent - true agrega print=silent: la base no devuelve
+ *                       cuerpo.
+ *              Salida:  respBody - cuerpo de la respuesta, si se pidió.
+ *              Salida:  retorno (int) - código HTTP (> 0) o error (< 0,
+ *                       CLOUD_ERR_*).
+ *              Salida:  lastError_, lastLatencyMs_, stats_ - motivo del fallo,
+ *                       latencia y contadores.
+ *
+ * @peripherals Internos: bloque WiFi (TLS), Serial/USB-CDC (log).
+ *              Externos: Firebase Realtime Database.
+ *******************************************************************************/
 int CloudDb::request(const char* method, const char* path, const char* json, bool silent, String* respBody) {
   lastError_ = "";
   if (WiFi.status() != WL_CONNECTED) {
@@ -372,10 +611,65 @@ int CloudDb::request(const char* method, const char* path, const char* json, boo
   return code;
 }
 
+/*******************************************************************************
+ * @brief       Escribe (PUT) un JSON en una ruta de la base, reemplazando lo
+ *              que hubiera.
+ *
+ * @details     Llama a request() en modo silencioso: la base no devuelve
+ *              cuerpo.
+ *
+ * @param       Entrada: path, json - ruta bajo devices/<id>/ y JSON a escribir.
+ *              Salida:  retorno (int) - código HTTP o error (< 0).
+ *
+ * @peripherals Internos: bloque WiFi (TLS).
+ *              Externos: Firebase Realtime Database.
+ *******************************************************************************/
 int CloudDb::put(const char* path, const char* json) { return request("PUT", path, json, true, nullptr); }
+
+/*******************************************************************************
+ * @brief       Actualiza (PATCH) los campos de un JSON en una ruta, sin borrar
+ *              el resto.
+ *
+ * @details     Llama a request() en modo silencioso: la base no devuelve
+ *              cuerpo.
+ *
+ * @param       Entrada: path, json - ruta bajo devices/<id>/ y campos a
+ *                       actualizar.
+ *              Salida:  retorno (int) - código HTTP o error (< 0).
+ *
+ * @peripherals Internos: bloque WiFi (TLS).
+ *              Externos: Firebase Realtime Database.
+ *******************************************************************************/
 int CloudDb::patch(const char* path, const char* json) { return request("PATCH", path, json, true, nullptr); }
+
+/*******************************************************************************
+ * @brief       Borra (DELETE) una ruta de la base.
+ *
+ * @details     Llama a request() en modo silencioso y sin cuerpo.
+ *
+ * @param       Entrada: path - ruta bajo devices/<id>/.
+ *              Salida:  retorno (int) - código HTTP o error (< 0).
+ *
+ * @peripherals Internos: bloque WiFi (TLS).
+ *              Externos: Firebase Realtime Database.
+ *******************************************************************************/
 int CloudDb::del(const char* path) { return request("DELETE", path, nullptr, true, nullptr); }
 
+/*******************************************************************************
+ * @brief       Agrega (POST) un nodo hijo con clave automática en una ruta de
+ *              la base.
+ *
+ * @details     No es silencioso: necesita la respuesta {"name": <clave>}. Si
+ *              salió bien y pushKey no es nulo, extrae la clave con
+ *              jsonField().
+ *
+ * @param       Entrada: path, json - ruta bajo devices/<id>/ y JSON a agregar.
+ *              Salida:  pushKey - clave generada por la base (opcional).
+ *              Salida:  retorno (int) - código HTTP o error (< 0).
+ *
+ * @peripherals Internos: bloque WiFi (TLS).
+ *              Externos: Firebase Realtime Database.
+ *******************************************************************************/
 int CloudDb::post(const char* path, const char* json, String* pushKey) {
   String resp;
   int code = request("POST", path, json, false, &resp);  // not silent: we need {"name": <push key>}

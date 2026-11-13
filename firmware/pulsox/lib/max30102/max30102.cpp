@@ -14,6 +14,21 @@ static constexpr uint32_t ADC_MASK = 0x3FFFF;  // 18 bit
 static constexpr uint8_t MAX_CORRUPT_RUN = 3;  // consecutive all-ones samples replaced; more is a real saturation
 
 // ---- I2C access -------------------------------------------------------------
+
+/*******************************************************************************
+ * @brief       Escribe un registro del MAX30102 por I2C, con reintentos.
+ *
+ * @details     Hace hasta I2C_TRIES (5) intentos de beginTransmission, write y
+ *              endTransmission, con I2C_RETRY_MS (5 ms) entre cada uno, siempre
+ *              en la misma sesión del bus (sin reiniciar Wire).
+ *
+ * @param       Entrada: reg - dirección del registro.
+ *              Entrada: val - byte a escribir.
+ *              Salida:  retorno (bool) - true si algún intento recibió ACK.
+ *              Salida:  lastErr_ - código de error del último intento.
+ *
+ * @peripherals Internos: I2C (Wire). Externos: MAX30102.
+ *******************************************************************************/
 bool Max30102::writeReg(uint8_t reg, uint8_t val) {
   for (uint8_t i = 0; i < I2C_TRIES; i++) {
     wire_->beginTransmission(ADDR);
@@ -26,6 +41,22 @@ bool Max30102::writeReg(uint8_t reg, uint8_t val) {
   return false;
 }
 
+/*******************************************************************************
+ * @brief       Lee n bytes consecutivos a partir de un registro del MAX30102.
+ *
+ * @details     Escribe la dirección del registro sin soltar el bus (repeated
+ *              start) y pide n bytes con requestFrom; reintenta hasta I2C_TRIES
+ *              veces con I2C_RETRY_MS entre intentos. Una lectura corta se
+ *              anota como ERR_SHORT_READ.
+ *
+ * @param       Entrada: reg - primer registro a leer.
+ *              Entrada: n - cantidad de bytes, también la capacidad de buf.
+ *              Salida:  buf - bytes leídos.
+ *              Salida:  retorno (bool) - true si llegaron los n bytes.
+ *              Salida:  lastErr_ - código de error del último intento.
+ *
+ * @peripherals Internos: I2C (Wire). Externos: MAX30102.
+ *******************************************************************************/
 bool Max30102::readBytes(uint8_t reg, uint8_t *buf, size_t n) {
   for (uint8_t i = 0; i < I2C_TRIES; i++) {
     wire_->beginTransmission(ADDR);
@@ -43,13 +74,33 @@ bool Max30102::readBytes(uint8_t reg, uint8_t *buf, size_t n) {
   return false;
 }
 
-// Reading the status registers clears them (and releases INT).
+/*******************************************************************************
+ * @brief       Limpia las interrupciones pendientes del MAX30102.
+ *
+ * @details     Lee INT_STATUS_1 e INT_STATUS_2 y descarta el valor: leer esos
+ *              registros borra los flags y suelta la línea INT.
+ *
+ * @param       Salida:  lastErr_ - se actualiza si falla alguna lectura.
+ *
+ * @peripherals Internos: I2C (Wire). Externos: MAX30102.
+ *******************************************************************************/
 void Max30102::clearInterrupts() {
   uint8_t dummy;
   readReg(INT_STATUS_1, dummy);
   readReg(INT_STATUS_2, dummy);
 }
 
+/*******************************************************************************
+ * @brief       Convierte un código de error de I2C o del driver en un texto.
+ *
+ * @details     Cubre los códigos de Wire.endTransmission() (0 a 5) y los ERR_*
+ *              propios del driver; cualquier otro valor da "desconocido".
+ *
+ * @param       Entrada: err - código de error.
+ *              Salida:  retorno (const char *) - texto en español, sin tildes.
+ *
+ * @peripherals Ninguno.
+ *******************************************************************************/
 const char *Max30102::errorText(uint8_t err) {
   switch (err) {
     case 0: return "ok";
@@ -68,6 +119,20 @@ const char *Max30102::errorText(uint8_t err) {
 }
 
 // ---- Control ------------------------------------------------------------------
+
+/*******************************************************************************
+ * @brief       Reinicia por software el MAX30102 y espera a que termine.
+ *
+ * @details     Escribe el bit RESET de MODE_CONFIG y lo lee cada 1 ms hasta que
+ *              se borra (máximo RESET_TIMEOUT_MS = 100 ms). Después limpia las
+ *              interrupciones: PWR_RDY vuelve a quedar en 1 y mantiene INT en
+ *              bajo.
+ *
+ * @param       Salida:  retorno (bool) - true si el reset terminó a tiempo.
+ *              Salida:  lastErr_ - ERR_RESET_TIMEOUT si no terminó.
+ *
+ * @peripherals Internos: I2C (Wire). Externos: MAX30102.
+ *******************************************************************************/
 bool Max30102::softReset() {
   if (!writeReg(MODE_CONFIG, MODE_RESET)) return false;
   uint32_t start = millis();
@@ -83,6 +148,24 @@ bool Max30102::softReset() {
   return false;
 }
 
+/*******************************************************************************
+ * @brief       Inicializa el driver: comprueba que hay un MAX30102 y lo
+ *              reinicia.
+ *
+ * @details     Guarda el bus, pone a cero los contadores y hace una transacción
+ *              de prueba descartable (la primera tras Wire.begin() falla en
+ *              esta placa). Lee PART_ID, espera 0x15 y llama a softReset(), que
+ *              borra LED y modo de antes de un reset.
+ *
+ * @param       Entrada: wire - bus I2C, ya iniciado con Wire.begin().
+ *              Salida:  retorno (bool) - true si respondió, es un MAX30102 y se
+ *                       reinició.
+ *              Salida:  wire_, overflow_, corrupt_, corruptRun_, haveLast_ -
+ *                       quedan inicializados.
+ *              Salida:  lastErr_ - ERR_BAD_PART_ID u otro código si falla.
+ *
+ * @peripherals Internos: I2C (Wire). Externos: MAX30102.
+ *******************************************************************************/
 bool Max30102::begin(TwoWire &wire) {
   wire_ = &wire;
   overflow_ = 0;
@@ -102,6 +185,22 @@ bool Max30102::begin(TwoWire &wire) {
   return softReset();
 }
 
+/*******************************************************************************
+ * @brief       Configura el MAX30102 en modo SpO2 (RED + IR) y arranca el
+ *              muestreo.
+ *
+ * @details     Escribe en orden FIFO_CONFIG, SPO2_CONFIG, la corriente de cada
+ *              LED y los tres punteros del FIFO en 0, y al final MODE_CONFIG =
+ *              SPO2. INT_ENABLE_2 queda en 0: el FIFO se consulta por polling.
+ *
+ * @param       Entrada: cfg - FIFO_CONFIG, SPO2_CONFIG y corriente de los LED
+ *                       rojo e IR.
+ *              Salida:  retorno (bool) - true si todas las escrituras tuvieron
+ *                       ACK.
+ *              Salida:  overflow_ - vuelve a 0 si la configuración salió bien.
+ *
+ * @peripherals Internos: I2C (Wire). Externos: MAX30102.
+ *******************************************************************************/
 bool Max30102::configure(const Max30102Config &cfg) {
   bool ok = writeReg(INT_ENABLE_2, 0x00) && writeReg(FIFO_CONFIG, cfg.fifoConfig) &&
             writeReg(SPO2_CONFIG, cfg.spo2Config) && writeReg(LED1_PA, cfg.ledRedPa) &&
@@ -111,6 +210,20 @@ bool Max30102::configure(const Max30102Config &cfg) {
   return ok;
 }
 
+/*******************************************************************************
+ * @brief       Apaga los LED y pone el MAX30102 en shutdown, verificándolo.
+ *
+ * @details     Pone LED1_PA y LED2_PA en 0 y MODE_CONFIG en SHDN (~1 uA), y los
+ *              lee de vuelta: si algo no quedó como se escribió falla con
+ *              ERR_READBACK.
+ *
+ * @param       Salida:  retorno (bool) - true si la relectura confirma shutdown
+ *                       y LED en 0 mA.
+ *              Salida:  lastErr_ - ERR_READBACK si un registro no guardó el
+ *                       valor.
+ *
+ * @peripherals Internos: I2C (Wire). Externos: MAX30102.
+ *******************************************************************************/
 bool Max30102::shutdown() {
   if (!writeReg(LED1_PA, 0x00) || !writeReg(LED2_PA, 0x00) || !writeReg(MODE_CONFIG, MODE_SHDN)) {
     return false;
@@ -125,6 +238,29 @@ bool Max30102::shutdown() {
 }
 
 // ---- FIFO -----------------------------------------------------------------------
+
+/*******************************************************************************
+ * @brief       Lee las muestras pendientes del FIFO del MAX30102.
+ *
+ * @details     Lee los punteros WR/OVF/RD (5 bits: uno mayor es lectura
+ *              corrupta) y baja lo pendiente por I2C de a 16 muestras. Una con
+ *              los 6 bytes en 0xFF (glitch del bus) se reemplaza por la última
+ *              buena; los bits sobre el 18 se enmascaran.
+ *
+ * @param       Entrada: max - capacidad de buf, en muestras.
+ *              Entrada: testCorrupt_ - (solo con PULSOX_TEST_HOOKS) fuerza una
+ *                       muestra en 0xFF.
+ *              Salida:  buf - muestras RED/IR de 18 bits.
+ *              Salida:  retorno (int) - cantidad escrita en buf, o -1 si falla
+ *                       el I2C.
+ *              Salida:  overflow_ - suma las muestras perdidas por desborde del
+ *                       FIFO.
+ *              Salida:  corrupt_, corruptRun_ - cuentan las muestras corruptas
+ *                       reemplazadas.
+ *              Salida:  lastErr_ - ERR_BAD_PTRS u otro código si falla.
+ *
+ * @peripherals Internos: I2C (Wire). Externos: MAX30102.
+ *******************************************************************************/
 int Max30102::readFifo(PpgSample *buf, size_t max) {
   uint8_t ptrs[3];  // WR_PTR, OVF_COUNTER, RD_PTR
   if (!readBytes(FIFO_WR_PTR, ptrs, 3)) return -1;
