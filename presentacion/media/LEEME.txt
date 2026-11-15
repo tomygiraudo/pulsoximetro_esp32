@@ -1,0 +1,22 @@
+Soltá acá tus archivos con estos nombres (la presentación los detecta sola):
+
+  Renders (pestaña "Renders" de la página 2)
+    render-1.jpg   vista general (la grande)
+    render-2.jpg   explosionado
+    render-3.jpg   detalle del resorte
+
+  Videos (pestaña "Armado")
+    armado.mp4     armado del prototipo (el grande)
+    impresion.mp4  impresión de la carcasa
+
+  Fotos (pestaña "Prototipo")
+    prototipo-1.jpg  prototipo terminado (la grande)
+    prototipo-2.jpg  pantalla TFT midiendo
+    prototipo-3.jpg  interior / PCB montada
+
+Imágenes: .jpg, .jpeg, .png o .webp.   Videos: .mp4 (H.264) o .webm.
+Los .mov del iPhone (HEVC) pueden no reproducirse en Chrome/Edge en Windows:
+convertilos a .mp4 H.264 antes.
+
+Teclas: flechas / espacio / PageUp-PageDown (sirve un clicker), 1-6 salta a
+una página, F pantalla completa, T tema claro/oscuro.
